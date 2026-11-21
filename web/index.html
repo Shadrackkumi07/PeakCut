@@ -1306,6 +1306,7 @@ function drawShell() {  const nav = (v, icon, label, extra = "") => `<button cla
   const aiBar = !toolBar && S.status.ai?.problem && me?.is_admin && S.view !== "settings" ? `<div class="vb" role="status">${ic("warn")}<span><b>The AI isn't answering.</b> ${esc(S.status.ai.problem)} Until then, clips are picked by loudness.</span><button class="btn sm primary" data-act="go" data-v="settings" data-tab="ai">Open AI settings</button></div>` : "";
   const diskBar = !toolBar && S.status.disk_full && S.view !== "settings" ? `<div class="vb" role="alert">${ic("warn")}<span><b>The drive PeakCut saves to is almost full, so it can't take new videos.</b> Free up space on it, or move PeakCut's folder to a bigger drive.</span>${me?.is_admin ? `<button class="btn sm primary" data-act="go" data-v="settings" data-tab="storage">Open Storage</button>` : ""}</div>` : "";
   put($("#vbanner"), toolBar ? toolBar : diskBar ? diskBar : aiBar ? aiBar : upBar ? upBar : me && me.verified === false ? `<div class="vb" role="status">${ic("warn")}<span>Confirm your email to start clipping. We sent a link to <b>${esc(me.email)}</b>.</span><button class="btn sm" data-act="resendverify">Send a new link</button></div>`
+    : kk && kk.off && S.view !== "settings" ? `<div class="vb" role="status">${ic("bolt")}<span><b>The AI is switched off.</b> No AI calls are made, and new streams wait until it is back on.</span>${me?.is_admin ? `<button class="btn sm primary" data-act="go" data-v="settings" data-tab="ai">Open AI settings</button>` : ""}</div>`
     : kk && kk.ready === false && S.view !== "usage" ? `<div class="vb" role="status">${ic("bolt")}<span>${me?.is_admin ? "Add your AI key to let the AI pick clips and write titles. Until then, clips are picked by loudness." : "The AI isn't set up on this server yet, so clips are picked by loudness."}</span>${me?.is_admin && S.view !== "settings" ? `<button class="btn sm primary" data-act="go" data-v="settings" data-tab="ai">${ic("plus")}Add AI key</button>` : ""}</div>` : "");
   put($("#tpic"), pic); $("#tpic").classList.toggle("live", !!(c && (c.live_job || liveOn(c).length)));
   put($("#utabs"), tabs); moveInd(); $(".topbar").classList.toggle("tabbed", !!tabs);
@@ -1875,7 +1876,7 @@ function drawCreatorForm() {
         <label class="f">Layout<select data-k="layout">${opts(S.status.layouts, c.layout)}</select></label>
         <label class="f">Shortest clip (seconds)<input data-k="min_len" type="number" value="${c.min_len}"></label>
         <label class="f">Longest clip (seconds)<input data-k="max_len" type="number" value="${c.max_len}"></label>
-        <label class="f">Clips per video<input data-k="max_clips" type="number" value="${c.max_clips}"></label>
+        <label class="f">Clips per video<input data-k="max_clips" type="number" min="0" value="${c.max_clips}"><span class="hint">0 means no limit: every moment that clears the score bar.</span></label>
         <label class="f">Minutes of live stream to keep<input data-k="buffer_min" type="number" value="${c.buffer_min}"></label></div></div>
     <div class="card"><h2>Posting</h2><p class="help">${A.length ? "Choose the accounts this creator's clips go to. One account can be shared by several creators." : "No accounts are connected yet. Connect one in Settings, then come back."}</p>
       ${A.length ? `<div class="row" style="margin-bottom:16px">${A.map(a => `<label class="ck"><input type="checkbox" data-acc value="${esc(a.id)}" ${c.accounts.includes(a.id) ? "checked" : ""}>${esc(a.label)} · ${esc(a.name)}</label>`).join("")}</div>` : `<button class="btn" data-act="go" data-v="settings" style="margin-bottom:16px">${ic("cog")}Open Settings</button>`}
@@ -2082,7 +2083,9 @@ async function drawSettings() {
   try {
     if (tab === "ai") {
       const k = S.ai = await api("/api/ai");
-      body.innerHTML = `<section class="set-sec"><h2>AI</h2><p class="help">PeakCut uses an AI model to pick the moments worth clipping and to write hooks, titles and captions. Use your own key from any of these services. You pay that service directly. Without a key, clips are picked by loudness.</p>
+      body.innerHTML = `<section class="set-sec"><h2>AI switch</h2>
+          <label class="sw span"><input type="checkbox" id="ai_on" ${k.off ? "" : "checked"}><span>AI is ${k.off ? "off" : "on"}<small>${k.off ? "No AI calls are made and nothing is spent. New finished streams wait until you switch it back on." : "Switch off to stop every AI call at once. Your keys and settings stay saved."}</small></span></label></section>
+        <section class="set-sec"><h2>AI</h2><p class="help">PeakCut uses an AI model to pick the moments worth clipping and to write hooks, titles and captions. Use your own key from any of these services. You pay that service directly. Without a key, clips are picked by loudness.</p>
           <div class="ai-state">${k.ready ? `<span class="pill ok">${ic("check")}Ready</span><span class="sub">In use: ${esc(k.in_use.label)} · ${esc(k.in_use.model)}${k.backup.ready && k.in_use.label !== k.backup.label ? ` · backup ${esc(k.backup.label)} · ${esc(k.backup.models[0] || "")}` : ""}</span>` : `<span class="pill warn">Not set up</span><span class="sub">Choose a service, paste your key and pick a model.</span>`}</div>
           <div class="ai-form">
             <label class="f">AI service<select id="ai_provider">${k.providers.map(x => `<option value="${esc(x.id)}" ${x.id === k.provider ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select></label>
@@ -2309,6 +2312,11 @@ document.addEventListener("dragleave", () => $(".composer")?.classList.remove("o
 document.addEventListener("drop", e => { const a = $(".composer"); if (a) { e.preventDefault(); a.classList.remove("over"); attach(e.dataTransfer.files); } });
 document.addEventListener("change", async e => {
   const t = e.target;
+  if (t.id === "ai_on") {
+    try { await send("/api/ai/power", {on: t.checked}); toast(t.checked ? "AI switched on." : "AI switched off. No AI calls will be made.", "ok"); }
+    catch (err) { t.checked = !t.checked; toast(err.message, "bad"); }
+    S.status = await api("/api/status"); drawShell(); return drawSettings();
+  }
   if (t.id === "bk_provider") { if (S.ai && t.value !== S.ai.backup.provider) { $("#bk_model").value = t.value === "openai" ? "gpt-6-luna" : ""; $("#bk_key").placeholder = "Paste your key"; } return; }
   if (t.id === "ai_provider") { $("#ai_models").innerHTML = ""; if (S.ai && t.value !== S.ai.provider) { $("#ai_model").value = ""; $("#ai_base").value = ""; } return aiHints(); }
   if (t.dataset.sel) {

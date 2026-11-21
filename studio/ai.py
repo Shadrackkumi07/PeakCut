@@ -123,9 +123,22 @@ def base_url() -> str:
     return _base(_first())
 
 
+def off() -> bool:
+    """True when the owner switched the AI off in Settings: no AI calls at all until it is switched on again."""
+    return bool(_from_dashboard().get("off"))
+
+
+def set_off(value: bool) -> dict:
+    with _lock:
+        data = dict(_from_dashboard())
+    data["off"] = bool(value)
+    _write(data)
+    return public()
+
+
 def ready() -> bool:
-    """True when at least one AI service has what it needs."""
-    return bool(services())
+    """True when at least one AI service has what it needs, and the AI is switched on."""
+    return bool(services()) and not off()
 
 
 def hide_keys(text: str) -> str:
@@ -148,7 +161,7 @@ def public() -> dict:
     its last four characters so the owner can tell which key it is."""
     main, back = current("main"), current("backup")
     first = _first()
-    return {**_public(main), "ready": ready(), "in_use": {"label": label(first), "model": (first["models"] or [""])[0]} if ready() else None,
+    return {**_public(main), "ready": ready(), "off": off(), "in_use": {"label": label(first), "model": (first["models"] or [""])[0]} if services() else None,
             "saved_here": bool(_from_dashboard().get("provider")), "backup": _public(back), "efforts": list(EFFORTS),
             "providers": [{"id": k, "label": v[0], "address": v[1], "needs_key": k not in NO_KEY, "key_url": v[3], "example": v[4]}
                           for k, v in PROVIDERS.items()]}

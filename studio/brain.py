@@ -206,6 +206,8 @@ def ask_ai(prompt, schema=None, purpose="AI call"):
     """Try each model of the main AI, then of the backup AI, with a couple of retries for rate limits and overloads.
     Returns (the answer, the model that gave it, tokens used) and notes the tokens in the usage record."""
     prompt += creator_notes(purpose)
+    if ai.off():
+        raise RuntimeError("The AI is switched off in Settings.")
     if not config.ai_ready():
         raise RuntimeError("The AI is not set up on this server.")
     last, where = None, None
@@ -286,6 +288,8 @@ def fallback_by_loudness(db, words, n, max_len, duration):
 
 
 def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=15, max_len=60, log=print):
+    if ai.off():   # switched off: no AI calls, and no clips picked by loudness alone either
+        return [], {"model": None, "note": "The AI is switched off in Settings, so no clips were picked."}
     z = loud_zscore(db)
     lines = make_lines(words, z)
     if not lines:

@@ -1330,6 +1330,16 @@ def ai_put(request: Request, body: dict = Body(...)):
     return out
 
 
+@app.post("/api/ai/power")
+def ai_power(request: Request, body: dict = Body(...)):
+    """Switch every AI call on or off."""
+    _admin(request)
+    out = ai.set_off(not bool(body.get("on")))
+    usage.forget_all()
+    ctx.bump()
+    return out
+
+
 @app.post("/api/ai/models")
 def ai_models(request: Request, body: dict = Body(default={})):
     _admin(request)

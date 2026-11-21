@@ -120,6 +120,9 @@ def check(c, now=None) -> list:
     url = source(c)
     if not url or not c.get("watch_uploads"):
         return []
+    from . import ai
+    if ai.off():
+        return []          # the AI is switched off: new streams are left for when it is back on
     d = _load(c["id"])
     if now - d.get("checked", 0) < EVERY - 60:
         return []

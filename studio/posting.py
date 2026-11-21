@@ -105,11 +105,12 @@ def on_clip_ready(job, clip):
 PER_CREATOR_DAY = 2          # most posts from one creator on one account in a day
 PRIORITY_DAY = 3             # ... for a creator marked as a priority
 PRIORITY_BONUS = 5           # a priority creator's clip counts this many points higher when choosing what to post
-FRESH_HOURS = 48             # older clips are not posted by the schedule (the moment has passed)
+FRESH_HOURS = 7 * 24         # older clips are not posted by the schedule (the moment has passed)
 SAME_WORDS = 0.6             # this alike in what was said: the same moment, skip it
 SAME_TITLE = 0.8             # this alike in title: the same story, skip it
 REPEAT_DAYS = 30
 SLOT_WINDOW = 50 * 60        # a posting time still counts this long after it, if nothing could go out on time
+SLOT_TAKEN = 90 * 60         # a clip you set by hand this close to a posting time already fills it
 
 
 def _words(clip) -> str:
@@ -202,7 +203,11 @@ def pick(account_id, now=None):
             per[p["creator"]] = per.get(p["creator"], 0) + 1
     last = done[-1]["creator"] if done else None
     cap = {c["id"]: PRIORITY_DAY for c in creators.all_creators() if c.get("priority")}
-    ok = [(j, k) for j, k, why in pool(account_id, now) if not why and per.get(j["creator"], 0) < cap.get(j["creator"], PER_CREATOR_DAY)]
+    good = [(j, k) for j, k, why in pool(account_id, now) if not why]
+    ok = [(j, k) for j, k in good if per.get(j["creator"], 0) < cap.get(j["creator"], PER_CREATOR_DAY)]
+    # The daily limit per creator spreads the day across creators. When only one or two creators have clips
+    # waiting, it gives way, so no posting time is left empty.
+    ok = ok or good
     fresh = [(j, k) for j, k in ok if j["creator"] != last]
     return (fresh or ok or [None])[0]
 
@@ -221,6 +226,9 @@ def run_slots(now=None) -> list:
         for aid in targets:
             if any(p.get("slot") == key and p["account"] == aid for p in _mine()):
                 continue                      # this posting time has been used on this account
+            if any(p["account"] == aid and p["status"] in OPEN + ("posted",) and abs((p.get("posted_at") or p["due_at"]) - t) < SLOT_TAKEN
+                   for p in _mine() if not p.get("slot")):
+                continue                      # a clip you set by hand already goes out around this time
             got = pick(aid, now)
             if not got:
                 continue                      # nothing good enough yet: tried again until the window closes

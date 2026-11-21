@@ -111,7 +111,7 @@ DEFAULTS = {"max_clips": 6, "min_len": 15, "max_len": 60, "style": "bounce", "la
             "range_start": None, "range_end": None}
 
 
-LIMITS = {"max_clips": (1, 30), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080)}
+LIMITS = {"max_clips": (0, 1000), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080)}
 
 
 def clean_options(options) -> dict:
@@ -660,12 +660,13 @@ def _run_job(job):
         words += [dict(w, s=round(w["s"] + shift, 2), e=round(w["e"] + shift, 2)) for w in bw]
         (d / "words.json").write_text(json.dumps(words), encoding="utf-8")
         _set(job, stage="Finding the best moments" + where, word_count=len(words))
-        left = int(o["max_clips"]) - len(job["clips"])
+        cap = int(o["max_clips"])          # 0: no limit, every moment that clears the score bar
+        left = cap - len(job["clips"]) if cap else 10 ** 6
         if left <= 0 or len(bw) < 8:
             job["done_blocks"] = bi + 1
             save(job)
             continue
-        quota = max(1, math.ceil(left / (len(blocks) - bi)))
+        quota = max(1, math.ceil(left / (len(blocks) - bi))) if cap else 999
         s0 = int((a - lo) / 16000)
         found, ai = brain.find_clips(bw, db[s0: s0 + int((b - a) / 16000) + 1], (b - a) / 16000, job["title"],
                                      job["uploader"], quota, int(o["min_len"]), int(o["max_len"]), notes.append)
@@ -720,6 +721,12 @@ def _run_job(job):
         learn.later(job["creator"], job["id"], list(words), job.get("title") or "")      # after "Done", on its own thread
 
 
+def stopping(e) -> bool:
+    """True when this error only means the server is shutting down, not that the video went wrong."""
+    text = str(e)
+    return isinstance(e, RuntimeError) and ("after shutdown" in text or "interpreter shutdown" in text)
+
+
 def _worker(quick_only=False):
     while True:
         kind, a, cid = _q.get(quick_only)
@@ -744,7 +751,11 @@ def _worker(quick_only=False):
                 render_one(job, clip, words)
         except Exception as e:  # noqa: BLE001
             (Path(job["dir"]) / "error.log").write_text(traceback.format_exc(), encoding="utf-8")
-            if kind == "job":
+            if kind == "job" and stopping(e):
+                # the server is shutting down (an update or a restart): this is not the video's fault. It stays
+                # "running" on disk, so it is picked up again from where it got to as soon as the server is back.
+                save(job)
+            elif kind == "job":
                 for c in job["clips"]:
                     if c.get("status") in ("queued", "rendering"):
                         c.update(status="error", error="The video stopped before this clip was made.")

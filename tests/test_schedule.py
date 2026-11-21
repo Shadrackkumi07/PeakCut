@@ -65,7 +65,13 @@ with ctx.as_user("u_local"), patch.object(posting.accounts, "get", return_value=
     for p in posting._mine():
         p["status"], p["posted_at"] = "posted", p["due_at"]
     left = [k["id"] for j, k, why in posting.pool(now=slots[2][1] + 120) if not why]
-    check("two a day from one creator at most", posting.pick("yt_test", slots[2][1] + 120), None)
+    with patch.object(posting, "PER_CREATOR_DAY", 2):
+        other = clips(B["id"], [(88, "a fresh moment from someone else entirely today", "Kai's other moment", 0)])
+        posting.set_pool(other["id"], "clip01", "approve")
+        check("two a day from one creator while others have clips", posting.pick("yt_test", slots[2][1] + 120)[0]["creator"], B["id"])
+        posting.set_pool(other["id"], "clip01", "skip")
+        check("the limit gives way when nobody else has clips, so no posting time is empty",
+              (posting.pick("yt_test", slots[2][1] + 120) or [{}])[1].get("id"), "clip03")
     check("but the clip is still there for tomorrow", left, ["clip03"])
 
     # a priority creator: a close call goes their way, and they can post a third time in a day
@@ -77,7 +83,8 @@ with ctx.as_user("u_local"), patch.object(posting.accounts, "get", return_value=
 
     # clips per video: up to 30
     check("up to 30 clips per video can be set", creators.update(A["id"], {"max_clips": 30})["max_clips"], 30)
-    check("more than 30 is brought down to 30", creators.update(A["id"], {"max_clips": 99})["max_clips"], 30)
+    check("no limit (0) can be set", creators.update(A["id"], {"max_clips": 0})["max_clips"], 0)
+    check("a video job takes no limit too", jobs.clean_options({"max_clips": 0})["max_clips"], 0)
     check("a single video job allows 30 too", jobs.clean_options({"max_clips": 30})["max_clips"], 30)
 
     # repeats
@@ -92,7 +99,9 @@ with ctx.as_user("u_local"), patch.object(posting.accounts, "get", return_value=
 
     # stale clips and Skip
     ja["clips"][2]["made_at"] = now - 3 * 86400
-    check("clips older than two days are not posted", "clip03" not in [k["id"] for _, k, _ in posting.pool(now=now)])
+    check("clips a few days old are still posted", "clip03" in [k["id"] for _, k, _ in posting.pool(now=now)])
+    ja["clips"][2]["made_at"] = now - 8 * 86400
+    check("clips older than a week are not posted", "clip03" not in [k["id"] for _, k, _ in posting.pool(now=now)])
     ja["clips"][2]["made_at"] = now
     posting.set_pool(ja["id"], "clip03", "skip")
     check("a skipped clip leaves the pool", "clip03" not in [k["id"] for _, k, _ in posting.pool(now=now)])
@@ -188,6 +197,31 @@ with ctx.as_user("u_local"), patch.object(posting.accounts, "get", return_value=
     made = posting.schedule_clip(jn["id"], "clip01", "now")
     check("Post now sets it for right away", abs(made[0]["due_at"] - time.time()) < 5)
     check("in manual mode, clips never wait for Approve", all(why != "waiting for your Approve" for _, _, why in posting.pool(now=now)))
+
+    # automatic posting: a clip you set by hand near a posting time fills it
+    accounts.save_settings({"auto_post": True, "approve_until": 0, "post_times": "08:00,11:00,14:00"})
+    day2 = now + 2 * 86400
+    t14 = posting.slot_times(day2)[2][1]
+    jh = clips(A["id"], [(88, "a hand picked moment set for the afternoon slot", "Speed hand picked", 0)])
+    with patch.object(posting.accounts, "list_accounts", return_value=[ACC]):
+        posting.schedule_clip(jh["id"], "clip01", t14 + 1800)
+    check("a posting time near a clip you set by hand is left to that clip", posting.run_slots(t14 + 60), [])
+    accounts.save_settings({"auto_post": False})
+
+    # the AI switched off
+    from studio import ai, brain
+    with patch.object(ai, "off", return_value=True):
+        try:
+            brain.ask_ai("hello", purpose="test"); stopped = False
+        except RuntimeError as e:
+            stopped = "switched off" in str(e)
+        check("with the AI off, no AI call is made", stopped)
+        import numpy as np
+        found, info = brain.find_clips([{"w": "hi", "s": 1, "e": 2}] * 20, np.zeros(60), 60.0)
+        check("and no clips are picked by loudness instead", found == [] and "switched off" in info["note"])
+        creators.update(A["id"], {"watch_uploads": True})
+        with patch.object(uploads, "latest", side_effect=AssertionError("must not look")):
+            check("and new streams are not clipped", uploads.check(creators.get(A["id"]), now + 99 * uploads.EVERY), [])
 
     # clean-up of old videos
     from studio import config, tidy
