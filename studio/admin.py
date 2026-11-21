@@ -6,6 +6,7 @@ change it, and no email address is special in the code. It is set by hand, on th
     python -m studio.admin list
     python -m studio.admin grant someone@example.com
     python -m studio.admin revoke someone@example.com
+    python -m studio.admin create-owner you@example.com     (a private server's one account, made an admin)
 
 Admins see accounts and AI use. They do not see anyone's videos, clips or connected accounts."""
 import shutil
@@ -160,6 +161,18 @@ def _cli(argv):
             print(f"No account with the email {argv[1]}. They need to sign up first.")
             return 1
         print(f"{argv[1]} is now {'an admin' if argv[0] == 'grant' else 'a normal user'}.")
+        return 0
+    if len(argv) == 2 and argv[0] == "create-owner":
+        # The one account of a private server (PEAKCUT_PRIVATE=1). The password is made here and shown once.
+        import secrets
+        from . import auth
+        password = secrets.token_urlsafe(18)
+        try:
+            auth.create_owner(argv[1], password)
+        except auth.AuthError as e:
+            print(e)
+            return 1
+        print(f"Owner account made for {argv[1]}. Password (shown only now): {password}")
         return 0
     print(__doc__)
     return 2

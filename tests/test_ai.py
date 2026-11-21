@@ -113,6 +113,54 @@ with ctx.as_user(u1.id):
 with ctx.as_user(u2.id):
     check("another user sees none of it", usage.summary({})["calls_total"] == 0)
 
+# ---- Claude first, OpenAI as the backup: either one alone is enough, and a failure moves on to the other
+def set_ai(main_key, backup_key):
+    config.AI_PROVIDER, config.AI_MODELS, config.AI_BASE_URL, config.AI_EFFORT = "anthropic", ["claude-haiku-5-5"], "", "xhigh"
+    config.AI_BACKUP_PROVIDER, config.AI_BACKUP_MODELS, config.AI_BACKUP_BASE_URL, config.AI_BACKUP_EFFORT = "openai", ["gpt-6-luna"], "", "xhigh"
+    os.environ["PEAKCUT_AI_KEY"], os.environ["PEAKCUT_AI_BACKUP_KEY"] = main_key, backup_key
+    config._kept.clear()
+    seen.clear()
+
+set_ai("", "")
+check("with no key at all, the AI is not ready", not ai.ready())
+set_ai("claude-key-123456", "")
+check("Claude alone is enough", ai.ready() and [c["provider"] for c in ai.services()] == ["anthropic"])
+set_ai("", "openai-key-123456")
+check("OpenAI alone is enough", ai.ready() and [c["provider"] for c in ai.services()] == ["openai"])
+out, _m, _t = brain.ask_ai("hello", purpose="test")
+check("with only OpenAI, OpenAI answers", out == [CLIP] and seen[-1][0].endswith("/chat/completions"))
+check("OpenAI is asked to think hard", seen[-1][1].get("reasoning_effort") == "xhigh" and seen[-1][2]["Authorization"] == "Bearer openai-key-123456")
+set_ai("claude-key-123456", "openai-key-123456")
+check("both set: Claude first, then OpenAI", [c["provider"] for c in ai.services()] == ["anthropic", "openai"])
+out, model, _t = brain.ask_ai("hello", purpose="test")
+check("Claude answers when it works", model == "claude-haiku-5-5" and len(seen) == 1 and seen[0][1]["output_config"] == {"effort": "xhigh"}
+      and seen[0][1]["thinking"] == {"type": "adaptive"} and seen[0][2]["x-api-key"] == "claude-key-123456")
+real = ai.httpx.post
+ai.httpx.post = lambda url, **k: Reply(401, {"error": "invalid x-api-key"}) if url.endswith("/messages") else real(url, **k)
+seen.clear()
+out, model, _t = brain.ask_ai("hello", purpose="test")
+check("Claude refusing: OpenAI answers instead", model == "gpt-6-luna" and out == [CLIP])
+ai.httpx.post = lambda url, **k: Reply(400, {"error": {"message": "effort xhigh is not supported"}}) if url.endswith("/messages") and k["json"]["output_config"]["effort"] == "xhigh" else real(url, **k)
+seen.clear()
+out, model, _t = brain.ask_ai("hello", purpose="test")
+check("Claude without that much thinking: asked again with high", model == "claude-haiku-5-5" and seen[-1][1]["output_config"] == {"effort": "high"})
+ai.httpx.post = real
+pub = ai.public()
+check("the settings page sees both, never a key", pub["provider"] == "anthropic" and pub["backup"]["provider"] == "openai"
+      and "claude-key-123456" not in json.dumps(pub) and "openai-key-123456" not in json.dumps(pub))
+check("errors never show a key", "openai-key-123456" not in ai.hide_keys("bad key openai-key-123456"))
+ai.save("openai", "gpt-6-luna", new_key="dash-openai-key-999", slot="backup", effort="xhigh")
+check("the backup can be saved from the dashboard", ai.current("backup")["key"] == "dash-openai-key-999" and ai.current("main")["key"] == "claude-key-123456")
+ai.save("anthropic", "claude-haiku-5-5", new_key="dash-claude-key-999", effort="xhigh")
+check("saving the main one keeps the backup", ai.current("backup")["key"] == "dash-openai-key-999" and ai.current("main")["key"] == "dash-claude-key-999")
+ai.save("", None, slot="backup")
+check("the backup can be switched off", [c["provider"] for c in ai.services()] == ["anthropic"])
+try:
+    ai.save("openai", "m", new_key="k-123456789", slot="backup", effort="huge"); bad = False
+except ValueError:
+    bad = True
+check("an unknown thinking level is refused", bad)
+
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
 import shutil  # noqa: E402
 db.engine.dispose()

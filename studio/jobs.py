@@ -111,7 +111,7 @@ DEFAULTS = {"max_clips": 6, "min_len": 15, "max_len": 60, "style": "bounce", "la
             "range_start": None, "range_end": None}
 
 
-LIMITS = {"max_clips": (1, 20), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080)}
+LIMITS = {"max_clips": (1, 30), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080)}
 
 
 def clean_options(options) -> dict:
@@ -352,6 +352,9 @@ def request_render(jid, cid, changes: dict):
     for k in ("hook", "title", "description", "style", "layout"):
         if k in changes:
             new[k] = str(changes[k])[:{"hook": 60, "title": 100, "description": 2000}.get(k, 20)]
+    from . import learn
+    for k in ("hook", "title"):           # the owner's own wording: how they want them to sound
+        learn.rewrote(job.get("creator"), k, clip.get(k), new.get(k))
     if new.get("style") not in render.STYLES:
         new["style"] = DEFAULTS["style"]
     if new.get("layout") not in render.LAYOUTS:
@@ -370,7 +373,8 @@ def render_one(job, clip, words):
         src = Path(clip["src"]) if clip.get("src") else Path(job["source_path"])
         if not clip.get("src"):
             clip["end"] = min(clip["end"], job["duration"])
-        local = dict(clip, start=clip["start"] - off, end=clip["end"] - off, hook=roman.to_roman(clip.get("hook") or ""))
+        local = dict(clip, start=clip["start"] - off, end=clip["end"] - off, hook=roman.to_roman(clip.get("hook") or ""),
+                     subscribe=bool((creators.get(job.get("creator")) or {}).get("subscribe_anim")))   # creators' clips only
         span = [round(clip["start"], 2), round(clip["end"], 2), "en2"]      # "en2": captions made always-English
         if clip.get("fixed_for") == span and clip.get("fixed_words") and not any(
                 roman.needs_roman(w.get("w", "")) for w in clip["fixed_words"]):
@@ -669,6 +673,12 @@ def _run_job(job):
         model = ai.get("model") or model
         if ai.get("note"):
             notes.append(ai["note"])
+        bar = (creators.get(job.get("creator")) or {}).get("min_score") if job.get("creator") and ai.get("model") else None
+        if bar:
+            weak = [c for c in found if (c.get("score") or 0) < bar]
+            found = [c for c in found if (c.get("score") or 0) >= bar]   # only strong moments, however many are allowed
+            if weak:
+                notes.append(f"Left out {len(weak)} weaker moment(s) under the score bar of {bar}")
         for c in found:
             c.update(id=f"clip{len(job['clips']) + 1:02d}", start=round(c["start"] + shift, 2),
                      end=round(c["end"] + shift, 2), style=o["style"], layout=o["layout"], status="queued", version=0)
@@ -693,6 +703,9 @@ def _run_job(job):
     job["ai"] = {"model": model, "tokens": tokens, "log": notes[-5:],
                  "note": "The AI was unavailable, so clips were picked by loudness only." if clips and not model else ""}
     stage = "Done" if clips else "Done, but nothing clip-worthy was found"
+    if not clips and (job.get("duration") or 0) > 600 and len(words) < (job.get("duration") or 0) / 60 * 10:
+        # a long video with hardly any words: its sound could not be read (some Kick recordings are damaged)
+        stage = "Done, but the sound in this video could not be read, so nothing was clipped"
     _set(job, status="done", stage=stage, progress=1.0, took=round(time.time() - t0))
     try:
         from . import notices
@@ -702,6 +715,9 @@ def _run_job(job):
     except Exception:  # noqa: BLE001
         pass
     creators.log(job["creator"], f"Video finished with {len(clips)} clips in {round(time.time() - t0)}s: {job['title']}")
+    if job.get("creator"):
+        from . import learn
+        learn.later(job["creator"], job["id"], list(words), job.get("title") or "")      # after "Done", on its own thread
 
 
 def _worker(quick_only=False):

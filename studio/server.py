@@ -20,7 +20,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from . import admin as admins
-from . import account, load
+from . import account, learn, load
 from . import (accounts, ai, alerts, auth, config, creators, ctx, db, jobs, live, media, posting,
                profiles, render, safe, transcribe, usage)
 
@@ -72,6 +72,9 @@ def _startup():
     jobs.start()
     live.start()
     posting.start()
+    from . import tidy, uploads
+    uploads.start()
+    tidy.start()
     from . import updates
     updates.start()                  # looks for a newer PeakCut every minute, in the background
 
@@ -119,6 +122,8 @@ class Gate:
                         raise HTTPException(413, "That request is too large.")
                 return m
 
+        if config.PRIVATE and (path == "/signup" or path == "/sitemap.xml"):
+            return await deny(404, "Not Found")         # a private server: no sign-up, nothing to list
         is_open = path in PAGES or any(path.startswith(p) for p in OPEN)
         admin_area = path == "/admin" or path.startswith(("/admin/", "/api/admin/"))
         if config.ACCOUNTS:
@@ -145,11 +150,13 @@ class Gate:
                 # changes must come from our own pages: the browser has to say so, and it has to match
                 if not _from_here(req, must_say=True):
                     return await deny(403, "Cross-site requests are not allowed.")
+        if not user and config.PRIVATE and path == "/":
+            return await deny(401, "", redirect="/login")      # a private server has no public home page
         if not user and not is_open:
             if path == "/app" or path.startswith("/app/"):
                 return await deny(401, "", redirect="/login")
             return await deny(401, "Please sign in.")
-        if user and path in ("/login", "/signup"):
+        if user and (path in ("/login", "/signup") or (config.PRIVATE and path == "/")):
             return await deny(303, "", redirect="/app")
         scope.setdefault("state", {})["user"] = user
         if user and path in ("/api/upload", "/api/upload/start") and method == "POST":
@@ -192,7 +199,7 @@ class Gate:
                     # redirects and errors are never kept by a CDN: a "not found" for a clip that is still being
                     # made, or a sign-in redirect, must not be shown to anyone later
                     h.append((b"cache-control", b"private, no-store"))
-                if path.startswith(("/app", "/admin", "/api/", "/auth/", "/reset", "/media/")):
+                if config.PRIVATE or path.startswith(("/app", "/admin", "/api/", "/auth/", "/reset", "/media/")):
                     h.append((b"x-robots-tag", b"noindex, nofollow"))
             await send(message)
 
@@ -333,6 +340,8 @@ def landing():
 
 @app.get("/robots.txt")
 def robots():
+    if config.PRIVATE:
+        return Response("User-agent: *\nDisallow: /\n", media_type="text/plain")
     return Response("User-agent: *\nAllow: /\nDisallow: /app\nDisallow: /api/\nDisallow: /auth/\nDisallow: /reset\nDisallow: /media/\n"
                     f"\nSitemap: {config.PUBLIC_URL}/sitemap.xml\n", media_type="text/plain",
                     headers={"Cache-Control": "public, max-age=86400"})
@@ -435,7 +444,8 @@ def favicon():
 @app.get("/api/public")
 def public_config():
     from . import mailer
-    return {"google": auth.google_ready(), "mail": mailer.ready(), "verify_email": config.VERIFY_EMAIL}
+    return {"google": auth.google_ready() and not config.PRIVATE, "mail": mailer.ready(), "verify_email": config.VERIFY_EMAIL,
+            "signup": not config.PRIVATE}
 
 
 def _signed_in(request: Request, user, first: bool, redirect=None):
@@ -641,7 +651,7 @@ def _creator_rows():
         if profiles.needs_refresh(c):
             profiles.refresh(c["id"])
         s = live.active_for(c["id"])
-        out.append({**c, "live_job": s.job["id"] if s else None, "log": creators.read_log(c["id"], 30)})
+        out.append({**c, "live_job": s.job["id"] if s else None, "log": creators.read_log(c["id"], 30), "learned": learn.view(c["id"])})
     return out
 
 
@@ -960,12 +970,14 @@ def _pairs(v, limit=300) -> list:
 
 @app.delete("/api/jobs/{jid}/clips/{cid}")
 def delete_clip(jid: str, cid: str):
-    _job_or_404(jid)
+    job = _job_or_404(jid)
+    clip = next((dict(c) for c in job["clips"] if c["id"] == cid), None)
     try:
         if not account.delete_clip(jid, cid):
             raise HTTPException(404, "No such clip")
     except account.Busy as e:
         raise HTTPException(409, str(e))
+    learn.deleted(job, clip)       # one clip deleted on purpose: a sign of what this owner does not want
     return {"ok": True}
 
 
@@ -986,6 +998,9 @@ def clips_zip(ids: str = ""):
         f = account.zip_clips(pairs)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    for jid, cid in pairs[:20]:
+        job = jobs.get(jid)
+        learn.kept(job, next((c for c in job["clips"] if c["id"] == cid), None) if job else None, "downloaded")
     from starlette.background import BackgroundTask
     return FileResponse(f, filename=f"peakcut-clips-{len(pairs)}.zip", media_type="application/zip",
                         headers={"Cache-Control": "private, no-store"}, background=BackgroundTask(lambda: f.unlink(missing_ok=True)))
@@ -1023,9 +1038,12 @@ def delete_my_account(request: Request, body: dict = Body(...)):
 def media_file(jid: str, name: str, download: int = 0):
     if not re.fullmatch(r"[\w\-]+\.(mp4|jpg)", name):
         raise HTTPException(404)
-    f = Path(_job_or_404(jid)["dir"]) / "clips" / name
+    job = _job_or_404(jid)
+    f = Path(job["dir"]) / "clips" / name
     if not f.is_file():
         raise HTTPException(404)
+    if download and name.endswith(".mp4"):
+        learn.kept(job, next((c for c in job["clips"] if c.get("file") == name), None), "downloaded")
     return FileResponse(f, filename=name if download else None, headers={"Cache-Control": "private, max-age=300"})
 
 
@@ -1197,6 +1215,45 @@ def edit_creator(cid: str, body: dict = Body(...)):
     return c
 
 
+@app.post("/api/pool/{jid}/{cid}")
+def pool_action(jid: str, cid: str, body: dict = Body(...)):
+    """Approve a clip for the posting times, or Skip it."""
+    _job_or_404(jid)
+    try:
+        posting.set_pool(jid, cid, str(body.get("action") or ""))
+    except KeyError:
+        raise HTTPException(404, "No such clip")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.post("/api/pool/{jid}/{cid}/schedule")
+def pool_schedule(jid: str, cid: str, body: dict = Body(...)):
+    """Post this clip at the time you chose ("at": a unix time, or "now")."""
+    _job_or_404(jid)
+    at = body.get("at")
+    try:
+        made = posting.schedule_clip(jid, cid, "now" if at == "now" else float(at))
+    except KeyError:
+        raise HTTPException(404, "No such clip")
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e) if isinstance(e, ValueError) and "could not convert" not in str(e) else "Choose a time.")
+    return {"ok": True, "due_at": made[0]["due_at"]}
+
+
+@app.post("/api/creators/{cid}/learned")
+def learned_action(cid: str, body: dict = Body(...)):
+    """Add, Ignore or Remove something PeakCut learned about this creator, or forget what it learned from you."""
+    if not creators.get(cid):
+        raise HTTPException(404, "No such creator")
+    _throttle("learn:" + ctx.uid(), 120, 600)
+    try:
+        return learn.act(cid, str(body.get("action") or ""), str(body.get("key") or "")[:60])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/creators/{cid}/live")
 def go_live(cid: str, body: dict = Body(default={})):
     _need_verified()
@@ -1249,7 +1306,7 @@ def ai_usage():
 # ---------------------------------------------------------------- the AI key and model, set from the dashboard
 # Only the owner (or an admin, when accounts are on) reaches these. The key is never sent back to the page.
 def _ai_error(e) -> str:
-    return safe.friendly(e, 300).replace(ai.key() or "\0", "<key>")
+    return ai.hide_keys(safe.friendly(e, 300))
 
 
 @app.get("/api/ai")
@@ -1264,7 +1321,8 @@ def ai_put(request: Request, body: dict = Body(...)):
     k = body.get("key")
     try:
         out = ai.save(body.get("provider"), body.get("models"), body.get("base_url") or "",
-                      None if k is None or (isinstance(k, str) and not k.strip() and not body.get("remove_key")) else str(k))
+                      None if k is None or (isinstance(k, str) and not k.strip() and not body.get("remove_key")) else str(k),
+                      slot=body.get("slot") or "main", effort=body.get("effort"))
     except (ValueError, TypeError) as e:
         raise HTTPException(400, str(e))
     usage.forget_all()
@@ -1277,7 +1335,7 @@ def ai_models(request: Request, body: dict = Body(default={})):
     _admin(request)
     _throttle("aimodels:" + ctx.uid(), 30, 600)
     try:
-        return {"models": ai.list_models(body.get("provider"), body.get("base_url"), body.get("key"))}
+        return {"models": ai.list_models(body.get("provider"), body.get("base_url"), body.get("key"), body.get("slot") or "main")}
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001
@@ -1285,15 +1343,16 @@ def ai_models(request: Request, body: dict = Body(default={})):
 
 
 @app.post("/api/ai/test")
-def ai_test(request: Request):
+def ai_test(request: Request, body: dict = Body(default={})):
     _admin(request)
     _throttle("aitest:" + ctx.uid(), 20, 600)
+    slot = (body or {}).get("slot")
     try:
-        return ai.test()
+        return ai.test(slot)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, ai.explain(e) or "The AI did not answer: " + _ai_error(e))
+        raise HTTPException(502, ai.explain(e, ai.current(slot) if slot in ai.SLOTS else None) or "The AI did not answer: " + _ai_error(e))
 
 
 # ================================================================ posting, accounts, settings
@@ -1444,15 +1503,33 @@ def apps_put(request: Request, body: dict = Body(...)):
         raise HTTPException(400, str(e))
 
 
+@app.get("/api/post-times")
+def post_times():
+    """The next few posting times, for the time buttons when posting a clip."""
+    return posting.next_times()
+
+
 @app.post("/api/posts")
 def add_posts(body: dict = Body(...)):
     job = jobs.get(str(body.get("job")))
     clip = next((c for c in job["clips"] if c["id"] == body.get("clip")), None) if job else None
     if not clip or clip.get("status") != "done":
         raise HTTPException(404, "That clip is not ready")
-    made = posting.enqueue(job, clip, [str(a) for a in body.get("accounts", [])][:20], now=bool(body.get("now")))
+    at = body.get("at")
+    if at not in (None, ""):
+        try:
+            at = float(at)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Choose a time.")
+        if at < time.time() - 120 or at > time.time() + 30 * 86400:
+            raise HTTPException(400, "Choose a time from now up to 30 days ahead.")
+        at = max(at, time.time())
+    else:
+        at = None
+    made = posting.enqueue(job, clip, [str(a) for a in body.get("accounts", [])][:20], now=bool(body.get("now")), at=at)
     if not made:
         raise HTTPException(400, "Nothing was queued. Pick at least one account this clip has not already gone to.")
+    learn.kept(job, clip, "posted")      # chosen by hand (automatic posts are not counted)
     return {"queued": len(made)}
 
 

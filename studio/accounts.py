@@ -24,7 +24,11 @@ _states: dict = {}   # one-time values for the connect redirects: state -> (user
 
 SECRET_KEYS = ("discord_webhook", "telegram_token")
 SETTING_DEFAULTS = {"discord_webhook": "", "telegram_token": "", "telegram_chat": "", "paused": False,
-                    "digest_hour": 8, "last_digest": "", "tour_done": False}
+                    "digest_hour": 8, "last_digest": "", "tour_done": False,
+                    # Posting at set times (see posting.py): on/off, the times, their time zone, and until when each
+                    # clip needs your Approve before it can go out (0 = never needs it).
+                    "schedule_on": False, "post_times": "08:00,11:00,13:00,16:00,19:00,21:00",
+                    "post_tz": "America/New_York", "approve_until": 0, "auto_post": False}
 
 YT_SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
 IG = "https://graph.instagram.com"
@@ -250,8 +254,23 @@ def save_settings(patch: dict) -> dict:
         for k, v in patch.items():
             if k not in SETTING_DEFAULTS:
                 continue
-            if k in ("paused", "tour_done"):
+            if k in ("paused", "tour_done", "schedule_on", "auto_post"):
                 v = bool(v)
+            elif k == "approve_until":
+                v = max(0.0, float(v or 0))
+            elif k == "post_times":
+                import re as _re
+                times = sorted({t.strip() for t in str(v).split(",") if _re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", t.strip())})
+                if not times or len(times) > 24:
+                    raise ValueError("Give posting times like 08:00, 13:30 (24-hour clock).")
+                v = ",".join(times)
+            elif k == "post_tz":
+                from zoneinfo import ZoneInfo
+                try:
+                    ZoneInfo(str(v))
+                except Exception:
+                    raise ValueError("That time zone isn't known (for example America/New_York).")
+                v = str(v)
             elif k == "digest_hour":
                 v = max(0, min(23, int(v)))
             else:
@@ -338,11 +357,14 @@ def _yt_token(acc) -> str:
     return acc["access_token"]
 
 
-def youtube_upload(acc, path: Path, title: str, description: str, tags: list, privacy: str):
+def youtube_upload(acc, path: Path, title: str, description: str, tags: list, privacy: str, category="24", cover: Path = None):
+    """Upload one Short. category: 24 Entertainment or 20 Gaming. cover: the clip's cover frame, set as the
+    thumbnail where YouTube allows it (it needs a verified channel; a refusal is ignored)."""
     token = _yt_token(acc)
     meta = {"snippet": {"title": re.sub(r"[<>]", "", title)[:100] or "Clip", "description": re.sub(r"[<>]", "", description)[:4900],
-                        "tags": tags[:15], "categoryId": "20"},
-            "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}}
+                        "tags": tags[:15], "categoryId": str(category) if str(category) in ("20", "24") else "24",
+                        "defaultLanguage": "en", "defaultAudioLanguage": "en"},
+            "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False, "containsSyntheticMedia": False}}
     size = path.stat().st_size
     start = _check(httpx.post("https://www.googleapis.com/upload/youtube/v3/videos",
                               params={"uploadType": "resumable", "part": "snippet,status"}, json=meta,
@@ -352,6 +374,13 @@ def youtube_upload(acc, path: Path, title: str, description: str, tags: list, pr
         done = _check(httpx.put(start.headers["Location"], content=f.read(),
                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "video/mp4"}, timeout=900),
                       "Uploading to YouTube").json()
+    if cover and Path(cover).is_file():
+        try:
+            httpx.post("https://www.googleapis.com/upload/youtube/v3/thumbnails/set", params={"videoId": done["id"]},
+                       content=Path(cover).read_bytes(), timeout=60,
+                       headers={"Authorization": f"Bearer {token}", "Content-Type": "image/jpeg"})
+        except httpx.HTTPError:
+            pass                       # the video is up; YouTube then picks the cover itself
     return done["id"], f"https://www.youtube.com/shorts/{done['id']}"
 
 

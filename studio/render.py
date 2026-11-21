@@ -155,7 +155,66 @@ def _hook_events(hook, dur, y):
     return ev
 
 
-def build_ass(words, start, end, hook, style_name, highlight, hook_y, cap_y) -> str:
+SUB = {"font": "Poppins ExtraBold", "size": 58, "red": "0000FF", "grey": "3A3A3A", "ink": "FFFFFF", "alpha": "38",
+       "pad_x": 34, "h": 104, "bell": 44, "gap": 18, "dur": 2.6}
+
+
+def subscribe_y(cap_y: float) -> float:
+    """Below the captions, above the bottom of the frame where YouTube shows the title and channel name."""
+    return min(1610, cap_y + 165)
+
+
+def _subscribe_events(at: float, y: float) -> list:
+    """A small subscribe button, bottom centre: pops in, is pressed (a tap ripple), turns into SUBSCRIBED, fades.
+    Drawn shapes and text, partly see-through, about 2.6 seconds starting `at` seconds into the clip."""
+    f, size = _Font.get(SUB["font"]), SUB["size"]
+    n = lambda v: f"{v:.0f}"                                                         # noqa: E731
+    out = []
+    for label, colour, a, b, enter in (("SUBSCRIBE", SUB["red"], at, at + 1.15, True),
+                                       ("SUBSCRIBED", SUB["grey"], at + 1.15, at + SUB["dur"], False)):
+        tw = f.width(label, size)
+        bw, bh = SUB["pad_x"] * 2 + SUB["bell"] + SUB["gap"] + tw, SUB["h"]
+        r = bh / 2
+        k = r * 0.552                                                                   # a quarter circle as a curve
+        pill = (f"m {n(r)} 0 l {n(bw - r)} 0 b {n(bw - r + k)} 0 {n(bw)} {n(r - k)} {n(bw)} {n(r)} "
+                f"b {n(bw)} {n(r + k)} {n(bw - r + k)} {n(bh)} {n(bw - r)} {n(bh)} l {n(r)} {n(bh)} "
+                f"b {n(r - k)} {n(bh)} 0 {n(r + k)} 0 {n(r)} b 0 {n(r - k)} {n(r - k)} 0 {n(r)} 0")
+        anim = ("\\fscx40\\fscy40\\t(0,170,\\fscx108\\fscy108)\\t(170,260,\\fscx100\\fscy100)"
+                "\\t(860,960,\\fscx92\\fscy92)\\t(960,1100,\\fscx100\\fscy100)" if enter else "\\fad(0,320)")
+        fade = "\\fad(120,0)" if enter else ""
+        span = f"{_ts(a)},{_ts(b)}"
+        cx = W / 2
+        out.append(f"Dialogue: 5,{span},Hook,,0,0,0,,{{\\an5\\pos({n(cx)},{n(y)}){fade}{anim}\\1a&H{SUB['alpha']}&\\c&H{colour}&\\p1}}{pill}{{\\p0}}")
+        # the bell, at the left of the button
+        s = SUB["bell"] / 50
+        bell = (f"m {n(25*s)} 0 b {n(12*s)} 0 {n(6*s)} {n(10*s)} {n(6*s)} {n(22*s)} l {n(6*s)} {n(33*s)} l 0 {n(41*s)} "
+                f"l {n(50*s)} {n(41*s)} l {n(44*s)} {n(33*s)} l {n(44*s)} {n(22*s)} b {n(44*s)} {n(10*s)} {n(38*s)} 0 {n(25*s)} 0 "
+                f"m {n(18*s)} {n(45*s)} b {n(18*s)} {n(53*s)} {n(32*s)} {n(53*s)} {n(32*s)} {n(45*s)}")
+        bx = cx - bw / 2 + SUB["pad_x"] + SUB["bell"] / 2
+        tx = cx - bw / 2 + SUB["pad_x"] + SUB["bell"] + SUB["gap"] + tw / 2
+        out.append(f"Dialogue: 6,{span},Hook,,0,0,0,,{{\\an5\\pos({n(bx)},{n(y)}){fade}{anim}\\c&H{SUB['ink']}&\\p1}}{bell}{{\\p0}}")
+        out.append(f"Dialogue: 6,{span},Hook,,0,0,0,,{{\\an5\\pos({n(tx)},{n(y - f.cap_shift(size))}){fade}{anim}"
+                   f"\\c&H{SUB['ink']}&\\fs{size}}}{label}")
+    # the tap: a white ring that spreads out and fades where the button is pressed
+    ring = "m 0 -40 b 22 -40 40 -22 40 0 b 40 22 22 40 0 40 b -22 40 -40 22 -40 0 b -40 -22 -22 -40 0 -40"
+    out.append(f"Dialogue: 7,{_ts(at + 0.86)},{_ts(at + 1.35)},Hook,,0,0,0,,{{\\an5\\pos({n(W / 2)},{n(y)})"
+               f"\\c&HFFFFFF&\\1a&H70&\\fscx30\\fscy30\\t(0,490,\\fscx260\\fscy260\\1a&HFF&)\\p1}}{ring}{{\\p0}}")
+    return out
+
+
+def subscribe_at(levels, dur: float) -> float:
+    """When the button appears: the loudest moment between 35% and 85% of the clip (the reaction), or 60% if the
+    loudness is not known. `levels` is loudness per half second from the clip's start."""
+    lo, hi = dur * 0.35, max(dur * 0.35, dur * 0.85 - SUB["dur"])
+    if levels:
+        cands = [(v, i * 0.5) for i, v in enumerate(levels) if lo <= i * 0.5 <= hi]
+        if cands:
+            top = max(v for v, _ in cands)
+            return min(t for v, t in cands if v >= top * 0.9)       # the first moment it gets (nearly) that loud
+    return min(hi, dur * 0.6)
+
+
+def build_ass(words, start, end, hook, style_name, highlight, hook_y, cap_y, sub_at=None) -> str:
     st = STYLES.get(style_name, STYLES["bounce"])
     words = [dict(w, s=w["s"] - CAPTION_LEAD, e=w["e"] - CAPTION_LEAD) for w in words]
     strong = {_key(h) for h in highlight if _key(h)}
@@ -176,6 +235,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     dur = end - start
     ev = _hook_events(_clean(hook), dur, hook_y)
+    if sub_at is not None and dur >= 8:
+        ev += _subscribe_events(sub_at, subscribe_y(cap_y))
     f = _Font.get(st["font"])
     inside = [dict(w, w=_clean(w["w"])) for w in words if w["s"] >= start - 0.05 and w["s"] < end]
     inside = sorted((w for w in inside if w["w"]), key=lambda w: w["s"])
@@ -227,6 +288,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return head + "\n".join(ev) + "\n"
 
 
+def _levels(src: Path, start: float, end: float) -> list:
+    """Loudness of the clip's sound, every half second (to place the subscribe button on the reaction)."""
+    try:
+        import numpy as np
+        p = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(src),
+                            "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], capture_output=True, timeout=60,
+                           creationflags=NO_WINDOW)
+        a = np.frombuffer(p.stdout, dtype=np.int16).astype(np.float32)
+        step = 4000
+        return [float(np.sqrt(np.mean(a[i:i + step] ** 2))) for i in range(0, len(a) - step + 1, step)]
+    except Exception:  # noqa: BLE001 - the button then simply shows at 60%
+        return []
+
+
 def _filter(layout, fg_h):
     if layout == "crop":
         return f"[0:v]fps={config.OUT_FPS},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[v0];"
@@ -246,8 +321,9 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
     out_dir.mkdir(parents=True, exist_ok=True)
     start, end = clip["start"], clip["end"]
     layout, fg_h, hook_y, cap_y = geometry(src_w, src_h, clip.get("layout", "blur"))
+    sub_at = subscribe_at(_levels(src, start, end), end - start) if clip.get("subscribe") else None
     ass = build_ass(words, start, end, clip.get("hook", ""), clip.get("style", "bounce"),
-                    clip.get("highlight_words", []), hook_y, cap_y)
+                    clip.get("highlight_words", []), hook_y, cap_y, sub_at)
     # The clip is made in a short work folder and moved into place afterwards. The caption step of ffmpeg cannot
     # open files whose full path is longer than 260 characters on Windows, which a data folder deep inside other
     # folders easily reaches. Inside the work folder every name is short and relative (a drive colon would also

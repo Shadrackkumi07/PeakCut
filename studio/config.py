@@ -149,6 +149,19 @@ SESSION_DAYS = int(env("PEAKCUT_SESSION_DAYS", "30"))
 # on your own computer. On a server that other people can reach, set PEAKCUT_ACCOUNTS=1: everyone then signs up
 # and signs in, and each person only sees their own videos.
 ACCOUNTS = env("PEAKCUT_ACCOUNTS", "0") == "1"
+# A private server: nobody can make an account (not by email, not with Google). The one owner account is made on the
+# server with `python -m studio.admin create-owner <email>`. The home page goes straight to sign-in and search
+# engines are asked to stay away.
+PRIVATE = ACCOUNTS and env("PEAKCUT_PRIVATE", "0") == "1"
+# Optional: a cookies.txt file (Netscape format) from a spare YouTube account, for when YouTube refuses a server's
+# address ("confirm you're not a bot"). Not needed on most machines.
+YTDLP_COOKIES = env("PEAKCUT_YTDLP_COOKIES_FILE", "")
+# Optional: the address of a "proof of origin" helper (bgutil-ytdlp-pot-provider), which makes YouTube far less
+# likely to refuse downloads from a server. The Compose file runs one at http://bgutil:4416 with the "youtube-helper"
+# profile.
+POT_URL = env("PEAKCUT_POT_URL", "")
+# Days a finished video is kept before it is removed with its clips (see tidy.py). 0 keeps everything.
+KEEP_DAYS = int(env("PEAKCUT_KEEP_DAYS", "0") or 0)
 # The two buttons along the top of the dashboard: the project's code, and where to follow its maker (feedback goes
 # there too). Set either to an empty value to hide that button, or point them at your own pages in a fork.
 REPO_URL = env("PEAKCUT_REPO_URL", "https://github.com/haziqahmedqasmi/peakcut").strip()
@@ -185,11 +198,22 @@ ALLOWED_SITES = tuple(s.strip().lower() for s in env(
 # These are the starting values. Whatever is saved from the dashboard (Settings, AI) is used instead.
 AI_PROVIDER = env("PEAKCUT_AI_PROVIDER", "gemini").strip().lower()            # gemini, openai, xai, groq, openrouter, anthropic, ollama, custom
 AI_MODELS = [m.strip() for m in env("PEAKCUT_AI_MODELS", "").split(",") if m.strip()]   # tried in this order
+# How hard the model thinks before answering (low, medium, high, xhigh, max), for Claude and OpenAI. Empty: the model's own default.
+AI_EFFORT = env("PEAKCUT_AI_EFFORT", "").strip().lower()
 AI_BASE_URL = env("PEAKCUT_AI_BASE_URL", "").rstrip("/")                      # only for "custom", or to override a provider's address
+# A second AI service, used when the first one fails or has no key. The same kinds of settings, all optional.
+AI_BACKUP_PROVIDER = env("PEAKCUT_AI_BACKUP_PROVIDER", "").strip().lower()
+AI_BACKUP_MODELS = [m.strip() for m in env("PEAKCUT_AI_BACKUP_MODELS", "").split(",") if m.strip()]
+AI_BACKUP_EFFORT = env("PEAKCUT_AI_BACKUP_EFFORT", "").strip().lower()
+AI_BACKUP_BASE_URL = env("PEAKCUT_AI_BACKUP_BASE_URL", "").rstrip("/")
 
 
 def ai_key() -> str:
     return _secret("PEAKCUT_AI_KEY", "PEAKCUT_AI_KEY_FILE", r"\S{8,}")
+
+
+def ai_backup_key() -> str:
+    return _secret("PEAKCUT_AI_BACKUP_KEY", "PEAKCUT_AI_BACKUP_KEY_FILE", r"\S{8,}")
 
 
 def ai_ready() -> bool:

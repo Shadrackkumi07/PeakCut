@@ -54,7 +54,7 @@ def resolve(url: str) -> dict:
     if media.is_youtube(url) and media.youtube_paused():
         raise NotLive(media.YT_BLOCKED)
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
+        with yt_dlp.YoutubeDL({**opts, **media.ydl_extra()}) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:  # noqa: BLE001
         if media.note_refusal(url, e):
@@ -564,8 +564,12 @@ class Session:
                     self.said = None
                     self._ai_check((said["t"] - self.SAID_BEFORE, said["t"] + self.SAID_AFTER), said["why"])
                 elif sp and (self.t_done >= sp["t"] + self.AUTO_AFTER or (self.ended and not busy)):
-                    self.spike = None
-                    self._ai_check((sp["t"] - self.AUTO_BEFORE, sp["t"] + self.AUTO_AFTER), "Jump: " + sp["why"])
+                    # At most one AI check every few minutes: loud streamers jump all the time. A jump that comes
+                    # sooner waits, and the next check reads everything from that jump up to now, so nothing is missed.
+                    if self.t_done - self.last_check >= every * 60 or (self.ended and not busy):
+                        self.spike = None
+                        start = max(sp["t"] - self.AUTO_BEFORE, self.t_done - every * 60 - 90)
+                        self._ai_check((start, max(self.t_done, sp["t"] + self.AUTO_AFTER)), "Jump: " + sp["why"])
                 elif self.t_done - self.last_check >= every * 60 or (self.ended and not busy and self.t_done > self.last_check):
                     self._ai_check()
                 self._publish()
@@ -578,6 +582,9 @@ class Session:
         failed = bool(self.job.get("error")) and not started
         self.job.update(status="error" if failed else "done", stage="Could not record" if failed else self.end_note)
         jobs.save(self.job)
+        if not failed:
+            from . import learn
+            learn.later(cid, self.job["id"], list(self.words), self.job.get("title") or "")
         creators.log(cid, f"Recording finished ({self.end_note.lower()}): {len(self.job['clips'])} clips, "
                           f"{round(self.samples / SR / 60)} min" if not failed else f"Recording failed: {self.job['error']}")
 
@@ -668,12 +675,16 @@ def _watch_user(uid):
     with ctx.as_user(uid):
         try:
             todo = [c for c in creators.all_creators() if c["auto_watch"] and c["channel"]]
+            todo.sort(key=lambda c: not c.get("priority"))      # priority creators get a free recording slot first
             if not todo:
                 return
         except Exception:  # noqa: BLE001
             return
         for c in todo:
             _watch_one(c)
+        for c in todo:
+            if c.get("priority") and not active_for(c["id"]):
+                _make_room_for(c)
 
 
 def check_now(cid):
@@ -691,6 +702,37 @@ def check_now(cid):
             _watch_one(c)
             profiles.refresh(cid, force=True)
     threading.Thread(target=run, daemon=True).start()
+
+
+def _is_live(c) -> bool:
+    from . import profiles
+    return any(profiles.live_shared(profiles.platform_of(u), u).get("live")
+               for u in [c["channel"]] + list(c.get("channels", {}).values()) if u and not media.is_youtube(u))
+
+
+_room_tried = {}      # creator id -> when a recording was last stopped for them and theirs still did not start
+
+
+def _make_room_for(c):
+    """A priority creator is live but every recording slot is taken by others: stop the newest recording of a
+    creator who is not a priority (its clips so far are kept) and record this one instead."""
+    if time.time() - _room_tried.get(c["id"], 0) < 1800:
+        return                       # tried lately and their stream would not record: don't stop anyone else for now
+    full = len(active_mine()) >= config.MAX_LIVE_PER_USER or len(active()) >= config.MAX_LIVE_TOTAL
+    if not full:
+        return
+    others = [x for x in active_mine() if not (creators.get(x.job["creator"]) or {}).get("priority")]
+    if not others or not _is_live(c):
+        return
+    gone = max(others, key=lambda x: x.job.get("created", 0))
+    name = (creators.get(gone.job["creator"]) or {}).get("name", "another creator")
+    gone.stop(f"Stopped to record {c['name']}, a priority creator")
+    creators.log(gone.job["creator"], f"Recording stopped to make room for {c['name']} (priority). Clips already made are kept.")
+    _watch_one(c)
+    if active_for(c["id"]):
+        creators.log(c["id"], f"Recording {c['name']} instead of {name}, since {c['name']} is a priority creator")
+    else:
+        _room_tried[c["id"]] = time.time()
 
 
 def _watch_one(c):

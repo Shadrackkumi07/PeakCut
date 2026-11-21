@@ -46,6 +46,14 @@ services:
     cpu_shares: ${PEAKCUT_CPU_SHARES:-1024}
     oom_score_adj: ${PEAKCUT_OOM_SCORE_ADJ:-0}
 
+  # Helps YouTube accept downloads from a server (see PEAKCUT_POT_URL). Add youtube-helper to COMPOSE_PROFILES and set
+  # PEAKCUT_POT_URL=http://bgutil:4416 in .env.
+  bgutil:
+    profiles: ["youtube-helper"]
+    image: brainicism/bgutil-ytdlp-pot-provider:2.0.2-node
+    restart: unless-stopped
+    mem_limit: 512m
+
   # Only on a server PeakCut has to itself: add COMPOSE_PROFILES=own-https to .env and Caddy handles HTTPS.
   caddy:
     profiles: ["own-https"]

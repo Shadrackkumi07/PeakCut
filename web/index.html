@@ -234,6 +234,18 @@ label.ck input{accent-color:var(--brand);margin:0}
 .card>h2,.card-head h2{font-size:15px;font-weight:600;color:var(--brand-ink)}
 .card>h2{margin-bottom:4px}
 .card>h2+.help{margin-bottom:18px}
+.learn{margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+.learn h3{font-size:14px;font-weight:600;margin:0 0 8px}
+.learn h3:not(:first-child){margin-top:18px}
+.lrow{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--line)}
+.lrow:last-of-type{border-bottom:0}
+.lrow>div{flex:1;min-width:0}
+.post-at{gap:6px;flex-wrap:wrap;margin-top:8px}
+.post-pick{display:inline-flex;gap:6px;align-items:center}
+.post-pick[hidden]{display:none}
+.lrow b{font-weight:600;overflow-wrap:anywhere}
+.lrow small{display:block;color:var(--dim);font-size:12.5px;margin-top:2px;overflow-wrap:anywhere}
+.lrow.paused b{color:var(--faint)}
 .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:18px}
 .help,.sub{color:var(--dim);font-size:13px}
 .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:22px;overflow-x:auto;scrollbar-width:none}
@@ -1309,7 +1321,7 @@ function pathFor(v, tab) {
 function fromPath(path) {
   const m = path.match(/^\/app\/creators\/([^/]+)(?:\/(setup|activity|clips))?\/?$/);
   if (m) return ["c:" + decodeURIComponent(m[1]), m[2] || "clips"];
-  const st = path.match(/^\/app\/settings(?:\/(ai|profile|security|apps|storage))?\/?$/);
+  const st = path.match(/^\/app\/settings(?:\/(ai|profile|security|apps|posting|storage))?\/?$/);
   if (st) return ["settings", st[1] || null];
   const k = Object.keys(ROUTES).find(x => ROUTES[x] && path.replace(/\/$/, "") === "/app/" + ROUTES[x]);
   return [k || "overview", "clips"];
@@ -1368,7 +1380,7 @@ function drawAdd(variant) {
     </div>
     <div class="composer-opts" inert><div class="og">
       <div class="ob wide"><div class="ot">Clips</div><div class="nsteps">
-        ${stepper("o_max", "How many", c?.max_clips ?? 6, 1, 20, 1, "")}
+        ${stepper("o_max", "How many", c?.max_clips ?? 6, 1, 30, 1, "")}
         ${stepper("o_min", "Shortest", c?.min_len ?? 15, 5, 120, 5, "s")}
         ${stepper("o_maxlen", "Longest", c?.max_len ?? 60, 10, 180, 5, "s")}
       </div></div>
@@ -1664,10 +1676,11 @@ async function makeClips() {
 /* ============================================================ clips + jobs */
 function scoreCls(s) { return s >= 80 ? "s-hi" : s >= 60 ? "s-mid" : ""; }
 function postPills(c) {
-  return Object.values(c.posts || {}).filter(p => p.status !== "cancelled").map(p => {
+  return Object.entries(c.posts || {}).filter(([, p]) => p.status !== "cancelled").map(([id, p]) => {
     const cls = p.status === "posted" ? "ok" : p.status === "failed" ? "bad" : "warn";
     const txt = `${esc(p.account_name)} · ${p.status === "scheduled" ? clock(p.due_at) : p.status}`;
-    return p.url ? `<a class="pill ${cls}" href="${esc(p.url)}" target="_blank" rel="noopener">${txt}</a>` : `<span class="pill ${cls}" title="${esc(p.error || "")}">${txt}</span>`;
+    const stop = p.status === "scheduled" ? `<button class="btn sm ghost" data-act="pcancel" data-id="${esc(id)}" title="Don't post this clip">Cancel</button>` : "";
+    return (p.url ? `<a class="pill ${cls}" href="${esc(p.url)}" target="_blank" rel="noopener">${txt}</a>` : `<span class="pill ${cls}" title="${esc(p.error || "")}">${txt}</span>`) + stop;
   }).join("");
 }
 function clipHtml(j, c) {
@@ -1837,7 +1850,9 @@ function drawCreatorForm() {
   const A = S.accounts;
   box.innerHTML = `<div class="card"><h2>Their stream</h2><p class="help">Where to record from, and whether to start by itself.</p>
       <div class="chans">${channelRows(c)}</div>
-      <div class="fields" style="margin-top:14px"><label class="sw span"><input type="checkbox" data-k="auto_watch" ${c.auto_watch ? "checked" : ""}><span>Record automatically when they go live<small>Checks straight away, then every two minutes.</small></span></label></div></div>
+      <div class="fields" style="margin-top:14px"><label class="sw span"><input type="checkbox" data-k="auto_watch" ${c.auto_watch ? "checked" : ""}><span>Record automatically when they go live<small>Checks straight away, then every two minutes.</small></span></label>
+        <label class="sw span"><input type="checkbox" data-k="watch_uploads" ${c.watch_uploads ? "checked" : ""}><span>Clip their finished streams<small>Every hour, looks for streams that have ended (on Twitch or Kick when they stream there, else YouTube) and clips the whole stream, up to 2 a day (3 for a priority creator). Videos already there when you switch this on are left alone.</small></span></label>
+        <label class="sw span"><input type="checkbox" data-k="priority" ${c.priority ? "checked" : ""}><span>Priority creator<small>Recorded first when several go live, up to 3 new videos and 3 posts a day instead of 2, and their clips win close calls at posting time.</small></span></label></div></div>
     <div class="card"><h2>How the AI decides</h2><p class="help">Two separate AI checks. The words judge reads only what was said. The reaction judge sees only how loud the streamer got and how busy chat was, never the words.</p>
       <div class="fields">
         <label class="f">Check the live stream every<select data-k="ai_every_min">${opts({1:"1 minute", 2:"2 minutes", 3:"3 minutes", 5:"5 minutes", 10:"10 minutes"}, c.ai_every_min || 3)}</select><small class="sub" id="costhint" style="font-weight:400">${costHint(c.ai_every_min)}</small></label>
@@ -1849,6 +1864,12 @@ function drawCreatorForm() {
         <label class="f">Minimum gap between live clips (minutes)<input data-k="min_gap_min" type="number" min="0" max="60" value="${c.min_gap_min}"></label>
         <label class="f span">Always clip the last 30 seconds when someone says<input data-k="trigger_words" value="${esc(c.trigger_words)}" placeholder="clip that, clip it"><small class="sub" style="font-weight:400">Separate phrases with commas. Matched on the transcript, so it needs no AI call.</small></label>
       </div></div>
+    <div class="card"><h2>Creator notes</h2>
+      <p class="help">Help the AI get this creator right: their name and nicknames, regular guests, inside jokes and words their community uses, the tone they like, and anything happening now (with the date). It is used when picking clips and writing hooks and titles. Captions always follow what was actually said.</p>
+      <div class="fields">
+        <label class="f span">Notes about this creator<textarea data-k="memory_notes" rows="8" maxlength="4000" placeholder="Name and nicknames, regular guests, inside jokes, community words, preferred tone, what is going on now (with dates), clips you liked and why…">${esc(c.memory_notes || "")}</textarea><small class="sub" style="font-weight:400">Up to 4,000 characters. Sent with each AI request for this creator, so keep it to what helps.</small></label>
+        <label class="sw span"><input type="checkbox" data-k="learn_auto" ${c.learn_auto ? "checked" : ""}><span>Add suggestions automatically<small>Off: PeakCut suggests, you choose. On: anything heard in two or more of their videos is used straight away.</small></span></label>
+      </div><div class="learn" id="clearn"></div></div>
     <div class="card"><h2>Clips</h2><p class="help">How this creator's clips look.</p>
       <div class="fields"><label class="f">Caption style<select data-k="style">${opts(S.status.styles, c.style)}</select></label>
         <label class="f">Layout<select data-k="layout">${opts(S.status.layouts, c.layout)}</select></label>
@@ -1868,6 +1889,22 @@ function drawCreatorForm() {
     <div class="card danger-card"><h2>Delete this creator</h2><p class="help">Removes ${esc(c.name)}, their settings and every video and clip filed under them. This cannot be undone.</p>
       <button class="btn danger" data-act="delcreator">${ic("trash")}Delete creator</button></div>
     <div class="savebar" id="savebar"><span>${ic("warn")}You have unsaved changes</span><button class="btn ghost" data-act="cdiscard">Discard</button><button class="btn primary" data-act="csave">${ic("check")}Save changes</button></div>`;
+  drawLearned();
+}
+function drawLearned() {
+  const c = creator(), box = $("#clearn"); if (!c || !box) return;
+  const L = c.learned || {suggestions: [], added: [], actions: {}, studied: 0}, A = L.actions || {};
+  const times = n => n === 1 ? "1 video" : n + " videos";
+  const row = (x, btns, paused) => `<div class="lrow${paused ? " paused" : ""}"><div><b>${esc(x.text)}</b> <span class="pill">${esc(x.kind)}</span>
+      <small>${esc(x.note || "")}${x.note ? " · " : ""}${paused ? "Not heard for 30 days, so not used for now" : "Heard in " + times(x.videos)}</small></div>${btns}</div>`;
+  const btn = (act, key, label, cls = "") => `<button type="button" class="btn sm ${cls}" data-act="learn" data-do="${act}" data-key="${esc(key)}">${label}</button>`;
+  const sug = L.suggestions.length ? L.suggestions.map(x => row(x, btn("add", x.key, "Add", "primary") + btn("ignore", x.key, "Ignore", "ghost"))).join("")
+    : `<p class="help" style="margin:0">${L.studied ? `Learned from ${times(L.studied)} so far.` : "Nothing learned yet."} A name or phrase is suggested once it comes up in two or more of their videos.</p>`;
+  const used = L.added.length ? `<h3>Being used</h3>` + L.added.map(x => row(x, btn("remove", x.key, "Remove", "ghost"), !x.fresh)).join("") : "";
+  const n = (A.edits || 0) + (A.liked || 0) + (A.disliked || 0);
+  const mine = `<h3>Learned from what you do</h3><div class="lrow"><div>${n ? `${A.edits || 0} hooks or titles you rewrote, ${A.liked || 0} clips you downloaded or posted, ${A.disliked || 0} clips you deleted.`
+      : "Nothing yet."}<small>Used straight away when picking clips and writing hooks, so they sound the way you like.</small></div>${n ? btn("forget_actions", "", "Forget this", "ghost") : ""}</div>`;
+  put(box, `<h3>Suggested from their videos</h3>${sug}${used}${mine}`);
 }
 const creatorForm = () => { const d = {}; $$("#cform [data-k]").forEach(i => { if (i.type === "radio") { if (i.checked) d[i.dataset.k] = i.value; } else d[i.dataset.k] = i.type === "checkbox" ? i.checked : i.value; }); d.accounts = $$("#cform [data-acc]:checked").map(i => i.value); return d; };
 const dirty = on => $("#savebar")?.classList.toggle("on", on);
@@ -1909,6 +1946,30 @@ function nextSteps(o) {
   if (S.creators.length && !S.creators.some(c => c.auto_watch)) st.push(["Turn on auto-record", "Record by itself whenever a creator goes live.", "go:c:" + S.creators[0].id + ":setup"]);
   return st;
 }
+function schedCard(o) {
+  const s = o.schedule; if (!s || !s.on) return "";
+  const tz = s.tz.split("/").pop().replace("_", " ");
+  const waitOk = s.auto && s.approve_until * 1000 > Date.now();
+  const ids = x => `data-j="${esc(x.job)}" data-c="${esc(x.clip)}"`;
+  const watch = x => x.file ? ` · <a class="lnk" href="/media/${esc(x.job)}/${esc(x.file)}" target="_blank" rel="noopener">Watch</a>` : "";
+  const head = x => `<b>${esc(x.title)}</b> <span class="pill">${esc(x.creator_name)}</span> <span class="pill ${x.score >= 85 ? "ok" : ""}">Score ${x.score}</span>`;
+  const autoRow = x => `<div class="lrow"><div>${head(x)}
+      <small>${x.why ? esc(x.why) : "Ready for the next posting time"}${watch(x)}</small></div>
+      ${!x.approved && x.why.startsWith("waiting") ? `<button class="btn sm primary" data-act="pool" data-do="approve" ${ids(x)}>Approve</button>` : x.approved ? `<span class="pill ok">Approved</span>` : ""}
+      <button class="btn sm ghost" data-act="pool" data-do="skip" ${ids(x)}>Skip</button></div>`;
+  const manualRow = x => `<div class="lrow"><div>${head(x)}
+      <small>${x.why ? esc(x.why) + " · " : ""}Post at${watch(x)}</small>
+      <div class="row post-at">${(s.presets || []).map(p => `<button class="btn sm${p.taken ? " ghost" : ""}" data-act="psched" ${ids(x)} data-at="${p.at}" data-label="${esc(p.label)}"${p.taken ? ` title="Another clip is already set for this time"` : ""}>${esc(p.label)}</button>`).join("")}
+        <button class="btn sm" data-act="ppick">${ic("clock")}Pick a time</button>
+        <button class="btn sm" data-act="psched" ${ids(x)} data-at="now" data-label="now">Post now</button>
+        <span class="post-pick" hidden><input type="datetime-local" aria-label="Date and time to post"><button class="btn sm primary" data-act="ppicked" ${ids(x)}>Set</button></span></div></div>
+      <button class="btn sm ghost" data-act="pool" data-do="skip" ${ids(x)}>Skip</button></div>`;
+  const sub = s.auto
+    ? `Automatic posting is on: ${s.times.join(", ")} (${esc(tz)} time)${s.next ? `, next at ${esc(s.next.slice(-5))}` : ""}. ${waitOk ? `Until ${new Date(s.approve_until * 1000).toLocaleDateString([], {month: "short", day: "numeric"})}, only clips you approve go out.` : "The best clip goes out at each time by itself."}`
+    : `You choose when each clip goes out. The buttons are your posting times (${esc(tz)} time). Automatic posting is off: <a class="lnk" href="/app/settings/posting" data-act="go" data-v="settings" data-tab="posting">turn it on in Settings</a>.`;
+  return `<div class="card"><div class="card-head"><div><h2>${s.auto ? "Posting times" : "Clips to post"}</h2><p class="sub">${sub}</p></div></div>
+    ${o.pool.length ? o.pool.map(s.auto ? autoRow : manualRow).join("") : `<p class="help">No clips waiting. New ones appear here as they are made.</p>`}</div>`;
+}
 function drawOverview() {
   const o = S.overview, box = $("#ov"); if (!o || !box) return;
   const sum = k => o.creators.reduce((a, r) => a + r[k], 0);
@@ -1935,6 +1996,7 @@ function drawOverview() {
       ${o.creators.length ? `<div class="scroll"><table><tr><th>Creator</th><th>Status</th><th>Auto-post</th><th class="num">Clips today</th><th class="num">Posted today</th><th class="num">Waiting</th><th class="num">Failed</th><th class="num">Views</th><th class="num">Est. $</th></tr>
       ${o.creators.map(r => `<tr><td><a class="lnk" href="#" data-act="go" data-v="c:${esc(r.id)}">${esc(r.name)}</a></td><td>${state(r)}</td><td>${r.autopost ? `<span class="pill ok">On</span>` : `<span class="pill">Off</span>`}</td><td class="num">${r.clips_today} <span class="sub">/ ${r.clips_total}</span></td><td class="num">${r.posted_today} <span class="sub">/ ${r.posted_total}</span></td><td class="num">${r.queued}</td><td class="num">${r.failed}</td><td class="num">${r.views.toLocaleString()}</td><td class="num">${r.earnings.toFixed(2)}</td></tr>`).join("")}</table></div>`
       : `<div class="empty"><img src="/brand/favicon.svg" alt=""><b>No creators yet</b>Add one to give each streamer their own workspace.</div>`}</div>
+    ${schedCard(o)}
     <div class="card"><div class="card-head"><div><h2>Post queue</h2><p class="sub">${o.paused ? "Paused. Recording and clipping carry on; nothing is posted." : "Queued clips go out at their scheduled time."}</p></div>
         <button class="btn ${o.paused ? "primary" : ""}" data-act="pause">${ic(o.paused ? "play" : "pause")}${o.paused ? "Resume posting" : "Pause all posting"}</button></div>
       ${o.posts.length ? `<div class="scroll"><table class="stack"><tr><th>When</th><th>Clip</th><th>Creator</th><th>Account</th><th class="num">Views</th><th></th></tr>
@@ -1995,6 +2057,7 @@ const setTabs = () => [
   ...(S.status.accounts === false ? [] : [["profile", "Profile", "user", "Your name, email and how you sign in"],
                                           ["security", "Security", "lock", "Password and signing out"]]),
   ["apps", "Connected apps", "plug", "Where your clips get posted"],
+  ["posting", "Posting", "clock", "Posting times, manual or automatic"],
   ...(S.status.user?.is_admin ? [["storage", "Storage", "folder", "Where videos and clips are kept"]] : [])];
 function aiHints() {
   const k = S.ai, sel = $("#ai_provider"); if (!k || !sel) return;
@@ -2004,6 +2067,10 @@ function aiHints() {
   $("#ai_model").placeholder = pv.example ? "For example " + pv.example : "The model id, exactly as the service names it";
   $("#ai_base").placeholder = pv.address || "http://127.0.0.1:1234/v1";
   $("#ai_basewrap").hidden = pv.id !== "custom" && !(same && k.base_url);
+}
+function effortField(id, v) {
+  const names = {"": "The model's own", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Maximum"};
+  return `<label class="f">Thinking<select id="${id}">${Object.entries(names).map(([x, l]) => `<option value="${x}" ${x === (v || "") ? "selected" : ""}>${l}</option>`).join("")}</select><span class="hint">Claude and OpenAI only. More thinking picks better moments but costs more.</span></label>`;
 }
 async function drawSettings() {
   const box = $("#sform"); if (!box) return;
@@ -2016,16 +2083,32 @@ async function drawSettings() {
     if (tab === "ai") {
       const k = S.ai = await api("/api/ai");
       body.innerHTML = `<section class="set-sec"><h2>AI</h2><p class="help">PeakCut uses an AI model to pick the moments worth clipping and to write hooks, titles and captions. Use your own key from any of these services. You pay that service directly. Without a key, clips are picked by loudness.</p>
-          <div class="ai-state">${k.ready ? `<span class="pill ok">${ic("check")}Ready</span><span class="sub">${esc(k.label)} · ${esc(k.models[0] || "")}</span>` : `<span class="pill warn">Not set up</span><span class="sub">Choose a service, paste your key and pick a model.</span>`}</div>
+          <div class="ai-state">${k.ready ? `<span class="pill ok">${ic("check")}Ready</span><span class="sub">In use: ${esc(k.in_use.label)} · ${esc(k.in_use.model)}${k.backup.ready && k.in_use.label !== k.backup.label ? ` · backup ${esc(k.backup.label)} · ${esc(k.backup.models[0] || "")}` : ""}</span>` : `<span class="pill warn">Not set up</span><span class="sub">Choose a service, paste your key and pick a model.</span>`}</div>
           <div class="ai-form">
             <label class="f">AI service<select id="ai_provider">${k.providers.map(x => `<option value="${esc(x.id)}" ${x.id === k.provider ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select></label>
             <label class="f">Key<input id="ai_key" type="password" autocomplete="off" spellcheck="false"><span class="hint" id="ai_keyhint"></span></label>
             <label class="f" id="ai_basewrap">Address<input id="ai_base" value="${esc(k.base_url || "")}" spellcheck="false"><span class="hint">Where the service answers. Only needed for a custom service.</span></label>
             <label class="f">Model<span class="with"><input id="ai_model" list="ai_models" value="${esc(k.models.join(", "))}" spellcheck="false"><button class="btn" type="button" data-act="aimodels">Find models</button></span>
               <datalist id="ai_models"></datalist><span class="hint">A fast, inexpensive model is the right choice. Add a second one after a comma to fall back on.</span></label>
+            ${effortField("ai_effort", k.effort)}
           </div>
-          <div class="row" style="margin-top:20px"><button class="btn primary" data-act="aisave">Save and test</button>${k.ready ? `<button class="btn" data-act="aitest">Test again</button>` : ""}</div></section>`;
+          <div class="row" style="margin-top:20px"><button class="btn primary" data-act="aisave">Save and test</button>${k.ready ? `<button class="btn" data-act="aitest">Test again</button>` : ""}</div></section>
+        <section class="set-sec"><h2>Backup AI</h2><p class="help">Used when the AI above fails, runs out of credit, or has no key. Either one alone is enough for PeakCut to work.</p>
+          <div class="ai-form">
+            <label class="f">AI service<select id="bk_provider"><option value="">None</option>${k.providers.map(x => `<option value="${esc(x.id)}" ${x.id === k.backup.provider ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select></label>
+            <label class="f">Key<input id="bk_key" type="password" autocomplete="off" spellcheck="false" placeholder="${k.backup.has_key ? `Saved${k.backup.key_hint ? ", ends in " + esc(k.backup.key_hint) : ""}. Paste a new key to replace it` : "Paste your key"}"><span class="hint">The key stays on this server and is never shown again.</span></label>
+            <label class="f">Model<input id="bk_model" value="${esc(k.backup.models.join(", "))}" spellcheck="false" placeholder="The model id, exactly as the service names it"></label>
+            ${effortField("bk_effort", k.backup.effort)}
+          </div>
+          <div class="row" style="margin-top:20px"><button class="btn primary" data-act="bksave">Save backup and test</button>${k.backup.ready ? `<button class="btn" data-act="bktest">Test again</button>` : ""}</div></section>`;
       aiHints();
+    }
+    if (tab === "posting") {
+      const st = S.settings = await api("/api/settings");
+      body.innerHTML = `<section class="set-sec"><h2>Posting</h2><p class="help">Your posting times are the buttons beside each clip on Home. With automatic posting on, the best clip waiting goes to YouTube at each of these times by itself.</p>
+          <label class="sw span"><input type="checkbox" id="auto_post" ${st.auto_post ? "checked" : ""}><span>Automatic posting<small>${st.auto_post ? "On: clips go out by themselves at your posting times." : "Off: nothing is posted until you choose a time for it on Home."}</small></span></label>
+          <div class="fields narrow" style="margin-top:14px"><label class="f">Posting times<input id="post_times" value="${esc((st.post_times || "").split(",").join(", "))}" spellcheck="false"><span class="hint">24-hour clock, ${esc((st.post_tz || "").replace("_", " "))} time. For example 08:00, 13:30.</span></label></div>
+          <div class="row" style="margin-top:14px"><button class="btn primary" data-act="postsave">Save</button></div></section>`;
     }
     if (tab === "profile") {
       const joined = me.created_at ? new Date(me.created_at * 1000).toLocaleDateString([], {day: "numeric", month: "long", year: "numeric"}) : "";
@@ -2144,8 +2227,12 @@ function drawClipDlg(full) {
         <button class="btn" data-act="remake">${ic("scissors")}Save and re-make clip</button>
         <h3>Post it</h3>
         <div id="dposts" class="row" style="gap:4px"></div>
-        ${S.accounts.length ? `<div class="row">${S.accounts.map(a => `<label class="ck"><input type="checkbox" data-pacc value="${esc(a.id)}">${esc(a.label)} · ${esc(a.name)}</label>`).join("")}</div>
-          <div class="row"><button class="btn primary" data-act="postnow">${ic("send")}Post now</button><button class="btn" data-act="postqueue">Add to queue</button></div>`
+        ${S.accounts.length ? `<div class="row">${S.accounts.map(a => `<label class="ck"><input type="checkbox" data-pacc value="${esc(a.id)}" ${S.accounts.length === 1 ? "checked" : ""}>${esc(a.label)} · ${esc(a.name)}</label>`).join("")}</div>
+          <p class="sub" style="margin:0">Post at one of your posting times, a time you pick, or now.</p>
+          <div class="row post-at" id="dtimes"></div>
+          <div class="row post-at"><button class="btn sm" data-act="ppick">${ic("clock")}Pick a time</button>
+            <span class="post-pick" hidden><input type="datetime-local" aria-label="Date and time to post"><button class="btn sm primary" data-act="postat" data-at="pick">Set</button></span>
+            <button class="btn sm primary" data-act="postnow">${ic("send")}Post now</button></div>`
           : `<p class="help">No accounts connected yet. Connect one in Settings.</p>`}
         <div class="row" style="margin-top:auto;padding-top:8px;border-top:1px solid var(--line)">
           ${c.status === "done" ? `<a class="btn" href="${m}${esc(c.file)}?download=1">${ic("down")}Download</a>` : ""}
@@ -2154,6 +2241,14 @@ function drawClipDlg(full) {
   } else if (D.sig !== sig) $("#stage").innerHTML = stage;
   D.sig = sig;
   put($("#dposts"), postPills(c));
+  if (full) fillPostTimes();
+}
+async function fillPostTimes() {
+  const box = $("#dtimes"); if (!box) return;
+  try {
+    const t = await api("/api/post-times");
+    box.innerHTML = t.map(p => `<button class="btn sm${p.taken ? " ghost" : ""}" data-act="postat" data-at="${p.at}" data-label="${esc(p.label)}"${p.taken ? ` title="Another clip is already set for this time"` : ""}>${esc(p.label)}</button>`).join("");
+  } catch { box.innerHTML = ""; }
 }
 $("#clipdlg").addEventListener("close", () => { $("#clipdlg").innerHTML = ""; D.jid = null; });
 $("#clipdlg").addEventListener("click", e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
@@ -2163,6 +2258,7 @@ function render() {
   drawShell(); drawJobs(); drawStream(); drawSelBar();
   if (S.view === "overview") drawOverview();
   if ($("#clog")) drawLog();
+  if ($("#clearn")) drawLearned();
   if (D.jid) drawClipDlg(false);
 }
 async function tick() {
@@ -2213,6 +2309,7 @@ document.addEventListener("dragleave", () => $(".composer")?.classList.remove("o
 document.addEventListener("drop", e => { const a = $(".composer"); if (a) { e.preventDefault(); a.classList.remove("over"); attach(e.dataTransfer.files); } });
 document.addEventListener("change", async e => {
   const t = e.target;
+  if (t.id === "bk_provider") { if (S.ai && t.value !== S.ai.backup.provider) { $("#bk_model").value = t.value === "openai" ? "gpt-6-luna" : ""; $("#bk_key").placeholder = "Paste your key"; } return; }
   if (t.id === "ai_provider") { $("#ai_models").innerHTML = ""; if (S.ai && t.value !== S.ai.provider) { $("#ai_model").value = ""; $("#ai_base").value = ""; } return aiHints(); }
   if (t.dataset.sel) {
     const k = t.dataset.sel;
@@ -2250,12 +2347,26 @@ document.addEventListener("click", async e => {
       } finally { b.disabled = false; }
       return;
     }
+    if (a === "bksave" || a === "bktest") {
+      b.disabled = true;
+      try {
+        const p = $("#bk_provider").value;
+        if (a === "bksave") await send("/api/ai", {slot: "backup", provider: p, models: $("#bk_model").value, key: $("#bk_key").value, effort: $("#bk_effort").value}, "PUT");
+        let ok = null, why = "";
+        if (p) { try { ok = await send("/api/ai/test", {slot: "backup"}); } catch (err) { why = err.message; } }
+        S.status = await api("/api/status"); drawShell(); await drawSettings();
+        if (!p) toast("Backup AI turned off.", "ok");
+        else if (ok) toast(`Backup saved. ${ok.model} answered, so it is ready.`, "ok");
+        else toast(`Backup saved, but the test failed. ${why}`, "bad");
+      } finally { b.disabled = false; }
+      return;
+    }
     if (a === "aisave" || a === "aitest") {
       b.disabled = true;
       try {
-        if (a === "aisave") await send("/api/ai", {provider: $("#ai_provider").value, models: $("#ai_model").value, base_url: $("#ai_base").value, key: $("#ai_key").value}, "PUT");
+        if (a === "aisave") await send("/api/ai", {provider: $("#ai_provider").value, models: $("#ai_model").value, base_url: $("#ai_base").value, key: $("#ai_key").value, effort: $("#ai_effort").value}, "PUT");
         let ok = null, why = "";
-        try { ok = await send("/api/ai/test"); } catch (err) { why = err.message; }
+        try { ok = await send("/api/ai/test", a === "aisave" ? {slot: "main"} : {}); } catch (err) { why = err.message; }
         S.status = await api("/api/status"); drawShell(); await drawSettings();
         if (ok) toast(`Saved. ${ok.model} answered, so the AI is ready.`, "ok");
         else toast(`Saved, but the test failed. ${why}`, "bad");
@@ -2422,10 +2533,52 @@ document.addEventListener("click", async e => {
     if (a === "acctmenu") return openAcct();
     if (a === "bellread") { await markRead(); return openBell().then(openBell); }
     if (a === "ntgo") { closePops(); const l = d.link || ""; if (l.startsWith("/app")) { const [v, tab] = fromPath(l); return go(v, tab); } if (l.startsWith("/")) location.href = l; return; }
+    if (a === "ppick") { const p = b.parentElement.querySelector(".post-pick"); p.hidden = !p.hidden; if (!p.hidden) p.querySelector("input").focus(); return; }
+    if (a === "psched" || a === "ppicked") {
+      let at = d.at, label = d.label;
+      if (a === "ppicked") {
+        const v = b.parentElement.querySelector("input").value;
+        if (!v) return toast("Choose a date and time first.", "bad");
+        at = new Date(v).getTime() / 1000; label = new Date(v).toLocaleString([], {weekday: "short", hour: "2-digit", minute: "2-digit"});
+      }
+      if (at === "now" && !confirm("Post this clip to YouTube now?")) return;
+      b.disabled = true;
+      try {
+        await send(`/api/pool/${d.j}/${d.c}/schedule`, {at: at === "now" ? "now" : Number(at)});
+        toast(at === "now" ? "Posting now." : `Set to post ${label}.`, "ok"); await loadOverview();
+      } finally { b.disabled = false; }
+      return;
+    }
+    if (a === "postsave") {
+      b.disabled = true;
+      try {
+        await send("/api/settings", {schedule_on: true, auto_post: $("#auto_post").checked, post_times: $("#post_times").value}, "PUT");
+        toast($("#auto_post").checked ? "Saved. Clips now post by themselves at your posting times." : "Saved. You choose when each clip posts.", "ok");
+        await drawSettings();
+      } finally { b.disabled = false; }
+      return;
+    }
+    if (a === "pool") {
+      b.disabled = true;
+      try { await send(`/api/pool/${d.j}/${d.c}`, {action: d.do}); await loadOverview(); }
+      finally { b.disabled = false; }
+      return;
+    }
+    if (a === "learn") {
+      b.disabled = true;
+      try { await send(`/api/creators/${creatorId()}/learned`, {action: d.do, key: d.key || ""}); await tick(); drawLearned(); }
+      finally { b.disabled = false; }
+      return;
+    }
     if (a === "csave") return void await saveCreator();
     if (a === "cdiscard") { drawCreatorForm(); return toast("Changes discarded"); }
     if (a === "pause") { await send("/api/settings", {paused:!S.overview.paused}, "PUT"); return loadOverview(); }
-    if (a === "pcancel" || a === "pretry") { await api(`/api/posts/${d.id}/${a === "pcancel" ? "cancel" : "retry"}`, {method:"POST"}); return loadOverview(); }
+    if (a === "pcancel" || a === "pretry") {
+      if (a === "pcancel" && !confirm("Cancel this post? The clip stays, it just won't be posted.")) return;
+      await api(`/api/posts/${d.id}/${a === "pcancel" ? "cancel" : "retry"}`, {method:"POST"});
+      toast(a === "pcancel" ? "Cancelled. It won't be posted." : "Trying again.", "ok");
+      await tick(); return loadOverview();
+    }
     if (a === "ssave") { await saveSettings(); toast("Saved", "ok"); return drawSettings(); }
     if (a === "plansave") {
       const p = {}; $$("#sform [data-plan]").forEach(i => { (p[i.dataset.plan] ??= {})[i.dataset.f] = Number(i.value); });
@@ -2440,12 +2593,23 @@ document.addEventListener("click", async e => {
       const body = {}; $$("#clipdlg [data-f]").forEach(i => body[i.dataset.f] = i.type === "number" ? Number(i.value) : i.value);
       await send(`/api/jobs/${D.jid}/clips/${D.cid}/render`, body); toast("Re-making the clip…", "ok"); return tick();
     }
-    if (a === "postnow" || a === "postqueue") {
+    if (a === "postnow" || a === "postqueue" || a === "postat") {
       const accs = $$("#clipdlg [data-pacc]:checked").map(i => i.value);
       if (!accs.length) return toast("Tick at least one account first.", "bad");
+      let at = null, label = d.label;
+      if (a === "postat") {
+        if (d.at === "pick") {
+          const v = b.parentElement.querySelector("input").value;
+          if (!v) return toast("Choose a date and time first.", "bad");
+          at = new Date(v).getTime() / 1000; label = new Date(v).toLocaleString([], {weekday: "short", hour: "2-digit", minute: "2-digit"});
+        } else at = Number(d.at);
+      }
       if (a === "postnow" && !await ask("Post now?", `This clip goes to ${accs.length} account${accs.length > 1 ? "s" : ""} straight away.`, "Post now")) return;
-      await send("/api/posts", {job:D.jid, clip:D.cid, accounts:accs, now:a === "postnow"});
-      toast(a === "postnow" ? "Posting now" : "Added to the queue", "ok"); return tick();
+      b.disabled = true;
+      try { await send("/api/posts", {job:D.jid, clip:D.cid, accounts:accs, now:a === "postnow", at}); }
+      finally { b.disabled = false; }
+      toast(a === "postnow" ? "Posting now" : at ? `Set to post ${label}` : "Added to the queue", "ok");
+      fillPostTimes(); return tick();
     }
   } catch (err) { b.disabled = false; toast(err.message, "bad"); }
 });

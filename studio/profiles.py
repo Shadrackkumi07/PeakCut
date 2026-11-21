@@ -4,6 +4,7 @@ YouTube and Twitch put the name and picture in the channel page's share tags (Yo
 count there); Kick has a public JSON endpoint with all three. Twitch does not show followers publicly, so that
 one comes back without a count. Everything here is best effort: a creator works the same without a profile."""
 import base64
+from html import unescape as _unescape
 import json
 import re
 import threading
@@ -97,7 +98,8 @@ def _fetch(url: str, plat: str) -> dict:
         user = d.get("user") or {}
         n = str(d.get("followers_count") or "").strip()  # Kick sends this as text
         out = {"platform": plat, "name": user.get("username") or slug,
-               "followers": f"{_short(int(n))} followers" if n.isdigit() else "", "pic_url": user.get("profile_pic") or ""}
+               "followers": f"{_short(int(n))} followers" if n.isdigit() else "", "pic_url": user.get("profile_pic") or "",
+               "bio": str(user.get("bio") or "")}
     elif plat == "Twitch" and (tw := _twitch_profile(url)):
         out = tw
     elif plat in ("YouTube", "Twitch"):
@@ -112,7 +114,8 @@ def _fetch(url: str, plat: str) -> dict:
         if plat == "YouTube":
             m = re.search(r'"content":"([\d.,]+[KMB]?) subscribers"', html) or re.search(r'([\d.,]+[KMB]?) subscribers', html)
             subs = f"{m.group(1)} subscribers" if m else ""
-        out = {"platform": plat, "name": name[:80], "followers": subs, "pic_url": _meta(html, "og:image")}
+        out = {"platform": plat, "name": name[:80], "followers": subs, "pic_url": _meta(html, "og:image"),
+               "bio": _meta(html, "og:description")}
     else:
         raise ValueError("Channel links must be from YouTube, Twitch or Kick.")
     try:
@@ -171,7 +174,7 @@ def _twitch_profile(url: str):
         return None
     try:
         import httpx
-        q = 'query($l:String!){user(login:$l){login displayName profileImageURL(width:300) followers{totalCount}}}'
+        q = 'query($l:String!){user(login:$l){login displayName description profileImageURL(width:300) followers{totalCount}}}'
         r = httpx.post("https://gql.twitch.tv/gql", json={"query": q, "variables": {"l": login}},
                        headers={"Client-ID": _TWITCH_WEB, **UA}, timeout=8)
         r.raise_for_status()
@@ -182,7 +185,8 @@ def _twitch_profile(url: str):
         return None
     n = (u.get("followers") or {}).get("totalCount")
     out = {"platform": "Twitch", "name": (u.get("displayName") or login)[:80],
-           "followers": f"{_short(int(n))} followers" if isinstance(n, int) else "", "pic_url": u.get("profileImageURL") or ""}
+           "followers": f"{_short(int(n))} followers" if isinstance(n, int) else "", "pic_url": u.get("profileImageURL") or "",
+           "bio": str(u.get("description") or "")}
     return out
 
 
@@ -190,7 +194,8 @@ def _ydl_info(url: str) -> dict:
     """Live details from yt-dlp without downloading anything (no formats are fetched)."""
     import yt_dlp
     from .live import _Quiet
-    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True,
+    from .media import ydl_extra
+    with yt_dlp.YoutubeDL({**ydl_extra(), "quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True,
                            "logger": _Quiet(), "socket_timeout": 10}) as y:
         return y.extract_info(url, download=False) or {}
 
@@ -302,7 +307,8 @@ def _profiles(cid, c, old, lives, force, now) -> dict:
                 if pic:
                     (creators.root(cid) / f"avatar-{key_}.img").write_bytes(pic[0])
                 p.update(platform=f["platform"], name=f["name"], followers=f["followers"],
-                         pic=pic[1] if pic else p.get("pic", ""), channel=url, at=now)
+                         pic=pic[1] if pic else p.get("pic", ""), channel=url, at=now,
+                         bio=re.sub(r"\s+", " ", _unescape(f.get("bio") or "")).strip()[:400])   # the public bio: helps spell names
         except Exception:
             p.setdefault("platform", platform_of(url))
             p.setdefault("channel", url)

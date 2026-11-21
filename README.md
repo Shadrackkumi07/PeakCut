@@ -81,6 +81,23 @@ PEAKCUT_AI_KEY=your-key-here
   tokens each video took.
 - Speech to text does not use the AI service. It runs on your own machine, so audio never leaves it.
 
+## Getting to know each creator
+
+A creator's **Setup** page has a **Creator notes** box: their nicknames, regular guests, inside jokes, the tone
+you like, and what is going on now. These notes go with every AI request for that creator, so names, hooks and
+titles come out right.
+
+PeakCut also learns by itself:
+
+- **From their videos.** After each video or live recording, one AI request lists the names, nicknames, games and
+  phrases that were said, checked against the channel's public bio and past video titles. Something heard in two
+  or more different videos shows up as a suggestion, with **Add** and **Ignore**. Switch on **Add suggestions
+  automatically** to skip that step. Anything not heard for 30 days stops being used until it comes up again.
+- **From you.** Hooks and titles you rewrite, clips you download or post yourself, and clips you delete one by one
+  are used straight away when picking clips and writing hooks. **Forget this** clears them.
+
+Everything learned is kept in `learned.json` in that creator's folder. Nothing is looked up on the web.
+
 ## Settings
 
 Everything is set through environment variables, normally in a `.env` file next to this README.

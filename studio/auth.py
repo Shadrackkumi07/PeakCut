@@ -180,8 +180,10 @@ def user_ids() -> list:
         return [r[0] for r in c.execute(sa.select(db.users.c.id).where(db.users.c.disabled == sa.false()))]
 
 
-def _create(email: str, name: str, password_hash=None, google_sub=None):
+def _create(email: str, name: str, password_hash=None, google_sub=None, owner=False):
     email = email.strip().lower()
+    if config.PRIVATE and not owner:
+        raise AuthError("This is a private server. New accounts can't be made here.")
     if not EMAIL_RE.match(email):
         raise AuthError("Enter a valid email address.")
     uid = "u_" + secrets.token_hex(8)
@@ -191,7 +193,7 @@ def _create(email: str, name: str, password_hash=None, google_sub=None):
         first = c.execute(sa.select(sa.func.count()).select_from(db.users)).scalar() == 0
         # Every new account is a normal user. Admins are made by hand on the server: python -m studio.admin grant <email>
         c.execute(db.users.insert().values(id=uid, email=email, name=name.strip()[:120], password_hash=password_hash,
-                                           google_sub=google_sub, is_admin=False, created_at=time.time()))
+                                           google_sub=google_sub, is_admin=bool(owner), created_at=time.time()))
     config.user_dir(uid).mkdir(parents=True, exist_ok=True)
     if google_sub:
         mark_verified(uid)      # Google has already confirmed this address
@@ -202,6 +204,14 @@ def signup(email: str, password: str, name: str = ""):
     """A new account with an email and password. Only a salted scrypt hash of the password is kept."""
     _check_password_rules(password)
     return _create(email, name, password_hash=hash_password(password))
+
+
+def create_owner(email: str, password: str):
+    """The one account of a private server, made from the server's command line (studio.admin create-owner)."""
+    _check_password_rules(password)
+    u, _ = _create(email, "", password_hash=hash_password(password), owner=True)
+    mark_verified(u.id)
+    return u
 
 
 def login(email: str, password: str):

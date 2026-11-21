@@ -72,7 +72,25 @@ Without SMTP on an HTTPS site, no reset emails can be sent.
 - **Updates**: `git pull && docker compose up -d --build`. A restart pauses videos in progress (they pick up
   where they stopped) and live recordings (clips already found are finished from the saved stream).
 - **Open sign-up**: anyone who can reach the site can make an account and use your AI key. On a public address,
-  keep the limits in `.env` sensible, or put the site behind your own access control.
+  keep the limits in `.env` sensible, or make it private (below).
+- **A private server**: `PEAKCUT_PRIVATE=1` (with `PEAKCUT_ACCOUNTS=1`) turns sign-up off completely, by email and
+  by Google, and sends the home page straight to sign-in. Make your one account on the server:
+  `docker compose exec app python -m studio.admin create-owner you@example.com` (it prints the password once).
+- **YouTube refusing the server**: add `youtube-helper` to `COMPOSE_PROFILES` and set
+  `PEAKCUT_POT_URL=http://bgutil:4416`. That runs a small helper that makes YouTube far more likely to accept the
+  server. If it still refuses, `PEAKCUT_YTDLP_COOKIES_FILE=/secrets/cookies.txt` uses cookies from a spare account.
+- **Running by itself**: a creator's **Clip their finished streams** looks for streams that have ended every hour, and clips each whole stream from Twitch, Kick or YouTube.
+  **Settings, posting times** (`schedule_on`, `post_times`, `post_tz`) posts the best waiting clip at each time,
+  spreading the day across creators and never repeating a posted moment. `PEAKCUT_KEEP_DAYS=10` removes finished
+  videos after 10 days so the disk never fills.
+
+## Oracle Cloud (Always Free)
+
+One `VM.Standard.A1.Flex` machine with 4 OCPUs and 24 GB, Ubuntu 24.04 (ARM), and a boot volume up to 200 GB is free
+for good. Open ports 80 and 443 in the subnet's security list, copy this folder and its `.env` to the machine, then
+`sudo bash deploy/oracle-setup.sh` installs Docker, opens the firewall and starts PeakCut. Free ARM machines are
+often "out of capacity": keep trying, or try another availability domain. For a free HTTPS address without buying
+a domain, `PEAKCUT_DOMAIN=<the IP with dashes>.sslip.io` works.
 
 ## A server that already runs other sites
 

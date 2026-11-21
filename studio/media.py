@@ -95,12 +95,23 @@ class _Quiet:
     def error(self, m): pass
 
 
+def ydl_extra() -> dict:
+    """Settings every yt-dlp call shares: the optional cookies file (see config.YTDLP_COOKIES)."""
+    out = {}
+    f = config.YTDLP_COOKIES
+    if f and Path(f).is_file():
+        out["cookiefile"] = f
+    if config.POT_URL:
+        out["extractor_args"] = {"youtubepot-bgutilhttp": {"base_url": [config.POT_URL]}}
+    return out
+
+
 def _ydl(opts):
     import yt_dlp
     # a channel or playlist link is answered as "a list" straight away, never walked video by video
     return yt_dlp.YoutubeDL({"noplaylist": True, "quiet": True, "no_warnings": True, "logger": _Quiet(),
                              "extract_flat": "in_playlist", "playlistend": 1, "socket_timeout": 20,
-                             "concurrent_fragment_downloads": 4, **opts})
+                             "concurrent_fragment_downloads": 4, **ydl_extra(), **opts})
 
 
 def _video_format(height):
