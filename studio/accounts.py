@@ -28,7 +28,7 @@ SETTING_DEFAULTS = {"discord_webhook": "", "telegram_token": "", "telegram_chat"
                     # Posting at set times (see posting.py): on/off, the times, their time zone, and until when each
                     # clip needs your Approve before it can go out (0 = never needs it).
                     "schedule_on": False, "post_times": "08:00,11:00,13:00,16:00,19:00,21:00",
-                    "post_tz": "America/New_York", "approve_until": 0, "auto_post": False}
+                    "post_tz": "America/New_York", "approve_until": 0, "auto_post": False, "only_topic": ""}
 
 YT_SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
 IG = "https://graph.instagram.com"
@@ -264,6 +264,8 @@ def save_settings(patch: dict) -> dict:
                 if not times or len(times) > 24:
                     raise ValueError("Give posting times like 08:00, 13:30 (24-hour clock).")
                 v = ",".join(times)
+            elif k == "only_topic":
+                v = " ".join(str(v or "").split())[:40]
             elif k == "post_tz":
                 from zoneinfo import ZoneInfo
                 try:

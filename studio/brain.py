@@ -26,6 +26,7 @@ SCHEMA = {
             "hashtags": {"type": "ARRAY", "items": {"type": "STRING"}},
             "highlight_words": {"type": "ARRAY", "items": {"type": "STRING"}},
             "reason": {"type": "STRING"},
+            "game": {"type": "STRING"},
         },
         "required": ["start", "end", "score", "hook", "title", "description", "hashtags", "reason"],
     },
@@ -69,6 +70,9 @@ Rules:
 - title: at most 70 characters, for a YouTube Short. Start with the creator's name (from Channel) when it fits,
   then the curiosity gap: what happened, not how it ends. True to the clip, no all-caps sentence, at most one emoji.
 - description: one or two sentences that add context without giving away the payoff.
+- game: the game being played or talked about in this moment, written plainly (for example GTA 6, Fortnite,
+  Minecraft), or "none" when no game is involved. Judge the moment itself: a moment from a GTA 6 stream that is
+  about another game or real life is not GTA 6.
 - hashtags: 4 tags without the # sign: the creator's name as one word (for example ishowspeed), the game or topic
   written the way fans search for it (for example gta6, fortnite, minecraft, r6siege; take it from the video title
   when the clip itself does not say), then one or two broad ones (gaming, funny, streamer). Never "shorts": that is
@@ -133,6 +137,7 @@ def _tidy(c, s, e):
         "hashtags": [t for t in tags if t][:8],
         "highlight_words": [roman.to_roman(_text(h, 30)) for h in words][:8],
         "reason": _text(c.get("reason"), 200),
+        "game": _text(c.get("game"), 40) or "none",
     }
 
 

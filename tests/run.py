@@ -64,7 +64,8 @@ def main() -> int:
                 ("a private server: no sign-up", ["tests/test_private.py"]),
                 ("posting times, no repeats, new uploads, subscribe button", ["tests/test_schedule.py"]),
                 ("priority creators take a recording slot", ["tests/test_priority_live.py"]),
-                ("a video stopped by an update carries on after it", ["tests/test_restart.py"])]
+                ("a video stopped by an update carries on after it", ["tests/test_restart.py"]),
+                ("only GTA 6 is posted, and a mix of creators", ["tests/test_topic.py"])]
         for name, args in runs:
             print(f"\n=== {name} ===", flush=True)
             r = subprocess.run([sys.executable, *args], cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")

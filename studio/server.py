@@ -1513,6 +1513,19 @@ def apps_put(request: Request, body: dict = Body(...)):
         raise HTTPException(400, str(e))
 
 
+@app.post("/api/topic/sweep")
+def topic_sweep(request: Request):
+    """Label every clip with its game and remove the ones that are not about the topic in Settings, Posting."""
+    _throttle("topicsweep:" + ctx.uid(), 6, 600)
+    from . import topic
+    if not topic.wanted():
+        raise HTTPException(400, "Set a topic first (Settings, Posting).")
+    try:
+        return topic.sweep()
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
 @app.get("/api/post-times")
 def post_times():
     """The next few posting times, for the time buttons when posting a clip."""

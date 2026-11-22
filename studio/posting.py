@@ -171,6 +171,8 @@ def pool(account_id=None, now=None) -> list:
     mine = _mine()
     recent = [p for p in mine if p["status"] in OPEN + ("posted",) and (p.get("posted_at") or p["due_at"]) > now - REPEAT_DAYS * 86400]
     out = []
+    from . import topic
+    want = topic.wanted()
     for j in jobs.list_jobs():
         c = creators.get(j.get("creator"))
         if not c or not c["autopost"] or not c["accounts"] or (account_id and account_id not in c["accounts"]):
@@ -178,6 +180,8 @@ def pool(account_id=None, now=None) -> list:
         for k in j["clips"]:
             if k.get("status") != "done" or k.get("pool") == "skipped":
                 continue
+            if not topic.on_topic(k, want):
+                continue                      # not about the topic you post about (Settings, Posting)
             if now - (k.get("made_at") or j["created"]) > FRESH_HOURS * 3600 or k.get("score", 0) < c["post_min_score"]:
                 continue
             if any(p["job"] == j["id"] and p["clip"] == k["id"] for p in mine if p["status"] in OPEN + ("posted",)):
@@ -208,8 +212,17 @@ def pick(account_id, now=None):
     # The daily limit per creator spreads the day across creators. When only one or two creators have clips
     # waiting, it gives way, so no posting time is left empty.
     ok = ok or good
-    fresh = [(j, k) for j, k in ok if j["creator"] != last]
-    return (fresh or ok or [None])[0]
+    fresh = [(j, k) for j, k in ok if j["creator"] != last] or ok
+    if not fresh:
+        return None
+    # A mix through the day: the creator with the fewest posts today goes first, a priority creator breaks a tie,
+    # then the best clip. pool() is already best first, so the first clip of the chosen creator is their best.
+    prio = {c["id"] for c in creators.all_creators() if c.get("priority")}
+    first = {}
+    for i, (j, _k) in enumerate(fresh):
+        first.setdefault(j["creator"], i)          # where each creator's best clip stands in the list
+    who = min(first, key=lambda cid: (per.get(cid, 0), cid not in prio, first[cid]))
+    return fresh[first[who]]
 
 
 def run_slots(now=None) -> list:
@@ -233,7 +246,7 @@ def run_slots(now=None) -> list:
             if not got:
                 continue                      # nothing good enough yet: tried again until the window closes
             job, clip = got
-            made += enqueue(job, clip, [aid], now=True, slot=key)
+            made += enqueue(job, clip, [aid], now=True, slot=key, at=now)
             creators.log(job["creator"], f"Posting at {key[-5:]}: {clip.get('title') or clip.get('hook')}")
     return made
 

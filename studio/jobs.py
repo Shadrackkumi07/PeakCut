@@ -674,6 +674,13 @@ def _run_job(job):
         model = ai.get("model") or model
         if ai.get("note"):
             notes.append(ai["note"])
+        if job.get("creator") and ai.get("model"):
+            from . import topic
+            want = topic.wanted()
+            off = [c for c in found if not topic.matches(c.get("game") or "", want)]
+            found = [c for c in found if topic.matches(c.get("game") or "", want)]   # only the topic you post about
+            if off:
+                notes.append(f"Left out {len(off)} moment(s) that are not about {want}")
         bar = (creators.get(job.get("creator")) or {}).get("min_score") if job.get("creator") and ai.get("model") else None
         if bar:
             weak = [c for c in found if (c.get("score") or 0) < bar]

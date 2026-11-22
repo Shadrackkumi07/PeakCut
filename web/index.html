@@ -2110,8 +2110,10 @@ async function drawSettings() {
       const st = S.settings = await api("/api/settings");
       body.innerHTML = `<section class="set-sec"><h2>Posting</h2><p class="help">Your posting times are the buttons beside each clip on Home. With automatic posting on, the best clip waiting goes to YouTube at each of these times by itself.</p>
           <label class="sw span"><input type="checkbox" id="auto_post" ${st.auto_post ? "checked" : ""}><span>Automatic posting<small>${st.auto_post ? "On: clips go out by themselves at your posting times." : "Off: nothing is posted until you choose a time for it on Home."}</small></span></label>
+          <div class="fields narrow" style="margin-top:14px"><label class="f">Only post clips about<input id="only_topic" value="${esc(st.only_topic || "")}" placeholder="Any game" spellcheck="false"><span class="hint">For example GTA 6. Clips about anything else are never made or posted. Leave empty for any game.</span></label></div>
           <div class="fields narrow" style="margin-top:14px"><label class="f">Posting times<input id="post_times" value="${esc((st.post_times || "").split(",").join(", "))}" spellcheck="false"><span class="hint">24-hour clock, ${esc((st.post_tz || "").replace("_", " "))} time. For example 08:00, 13:30.</span></label></div>
-          <div class="row" style="margin-top:14px"><button class="btn primary" data-act="postsave">Save</button></div></section>`;
+          <div class="row" style="margin-top:14px"><button class="btn primary" data-act="postsave">Save</button>
+            ${st.only_topic ? `<button class="btn" data-act="topicsweep">Remove clips not about ${esc(st.only_topic)}</button>` : ""}</div></section>`;
     }
     if (tab === "profile") {
       const joined = me.created_at ? new Date(me.created_at * 1000).toLocaleDateString([], {day: "numeric", month: "long", year: "numeric"}) : "";
@@ -2557,10 +2559,20 @@ document.addEventListener("click", async e => {
       } finally { b.disabled = false; }
       return;
     }
+    if (a === "topicsweep") {
+      if (!await ask("Remove off-topic clips?", "Every clip is checked for its game, and the ones that are not about this topic are deleted. Posts waiting for them are cancelled. Clips already posted stay.", "Remove")) return;
+      b.disabled = true;
+      try {
+        const r = await send("/api/topic/sweep");
+        toast(`Done. Removed ${r.removed.length} clip${r.removed.length === 1 ? "" : "s"} not about ${r.topic}, kept ${r.kept}.`, "ok");
+        await tick();
+      } finally { b.disabled = false; }
+      return;
+    }
     if (a === "postsave") {
       b.disabled = true;
       try {
-        await send("/api/settings", {schedule_on: true, auto_post: $("#auto_post").checked, post_times: $("#post_times").value}, "PUT");
+        await send("/api/settings", {schedule_on: true, auto_post: $("#auto_post").checked, post_times: $("#post_times").value, only_topic: $("#only_topic").value}, "PUT");
         toast($("#auto_post").checked ? "Saved. Clips now post by themselves at your posting times." : "Saved. You choose when each clip posts.", "ok");
         await drawSettings();
       } finally { b.disabled = false; }
